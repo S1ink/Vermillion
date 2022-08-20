@@ -17,6 +17,90 @@ inline float noNaN(float v) { return isnan(v) ? 0.f : v; }
 inline double noNaN(double v) { return isnan(v) ? 0.0 : v; }
 
 
+void VPipeline::invokeGui() { ImGui::Text("Default Text - Override 'invokeGui()' to customize input GUI!"); }
+
+
+void VisionTool::addPipeline(VPipeline* v) { this->pipelines.push_back(v); }
+void VisionTool::addPipelines(std::vector<VPipeline*>&& v) {
+	this->pipelines.reserve(this->pipelines.size() + v.size());
+	this->pipelines.insert(this->pipelines.end(), v.begin(), v.end());
+}
+void VisionTool::addPipelines(std::initializer_list<VPipeline*> v) {
+	this->pipelines.reserve(this->pipelines.size() + v.size());
+	this->pipelines.insert(this->pipelines.end(), v.begin(), v.end());
+}
+
+void Vision1::invokeGui() {
+	ImGui::SliderInt("Hue", &this->hue_rotate, 0, 180);
+	ImGui::SliderFloat("Alpha", &this->alpha, 0.f, 1.f, "%.3f");
+	ImGui::SliderFloat("Beta", &this->beta, 0.f, 1.f, "%.3f");
+	ImGui::SliderFloat("Gamma", &this->gamma, 0.f, 100.f, "%.3f");
+	ImGui::SliderInt("Blur", &this->blur, 0, 21);
+	ImGui::SliderFloat("DP", &this->dp, 1, 5);
+	ImGui::SliderFloat("Min dist %", &this->min_dist, 0.f, 100.f);
+	ImGui::SliderFloat("Canny Thresh", &this->hough_p1, 0, 255);
+	ImGui::SliderFloat("Acc Thresh", &this->hough_p2, 0, 255);
+	ImGui::SliderInt("Min Radius", &this->min_rad, 0, this->max_rad);
+	ImGui::SliderInt("Max Radius", &this->max_rad, this->min_rad, this->proc.size().width);
+	//ImGui::SliderFloat("Area thresh [% frame]", &this->area_frame, 0.f, 100.f, "%.3f", ImGuiSliderFlags_Logarithmic);
+	//ImGui::SliderFloat("Concavity", &this->thresh_concavity, 0.f, 1.f, "%.3f");
+	ImGui::Separator();
+	if (ImGui::Button("Add point")) {
+		this->plot.emplace_back(this->circles[0][0], this->circles[0][1]);
+	}
+	if (ImGui::Button("Reset points")) {
+		this->plot.clear();
+	}
+
+}
+void Vision1::process(cv::Mat& io_frame) {
+	cv::cvtColor(io_frame, this->proc, cv::COLOR_BGR2HSV);
+	for (size_t i = 0; i < this->proc.size().area(); i ++) {
+		(this->proc.data[i * 3] += this->hue_rotate) %= 180;
+	}
+	cv::cvtColor(this->proc, this->proc, cv::COLOR_HSV2BGR);
+	cv::split(this->proc, this->channels);
+	cv::addWeighted(this->channels[0], this->alpha, this->channels[1], this->beta, this->gamma, this->binary);
+	cv::subtract(this->channels[2], this->binary, this->binary);
+	if (this->blur > 0 && this->blur % 2 == 1) {
+		cv::medianBlur(this->binary, this->binary, this->blur);
+	}
+	this->circles.clear();
+	cv::HoughCircles(this->binary, this->circles, cv::HOUGH_GRADIENT, this->dp, this->min_dist / 100 * this->binary.size().width, this->hough_p1, this->hough_p2, this->min_rad, this->max_rad);
+
+	cv::aruco::detectMarkers(io_frame, this->markers_dict, this->corners, this->ids);
+	////cv::findContours(this->binary, this->contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+
+	cv::cvtColor(this->binary, io_frame, cv::COLOR_GRAY2BGR);
+	for (size_t i = 0; i < this->circles.size(); i++) {
+		cv::circle(io_frame, cv::Point{ (int)this->circles[i][0], (int)this->circles[i][1] }, this->circles[i][2], { 255, 255, 0 }, 2);
+		cv::putText(io_frame, std::to_string(i), cv::Point{ (int)this->circles[i][0], (int)this->circles[i][1] }, cv::FONT_HERSHEY_DUPLEX, 0.5, { 0, 255, 0 });
+	}
+	for (int i = 0; i < (int)this->plot.size() - 1; i++) {
+		cv::line(io_frame, this->plot[i], this->plot[i + 1], { 255, 255, 0 });
+	}
+
+	//Circle c{0};
+	//std::vector< cv::Point2i > contour;
+	//for (size_t i = 0; i < this->contours.size(); i++) {
+	//	if (cv::contourArea(this->contours[i]) > this->area_frame * io_frame.size().area() / 100) {
+	//		cv::drawContours(io_frame, this->contours, i, { 0, 255, 0 }, 2);
+	//		cv::minEnclosingCircle(this->contours[i], c.cvpoint, c.r);
+	//		cv::convexHull(this->contours[i], contour);
+	//		if (cv::contourArea(contour) / (CV_PI * pow(c.r, 2)) > this->thresh_concavity) {
+	//			cv::circle(io_frame, c.cvpoint, c.r, { 255, 255, 0 }, 2);
+	//		}
+	//	} else {
+	//		cv::drawContours(io_frame, this->contours, i, { 0, 0, 255 }, 2);
+	//	}
+	//}
+	///*float len = sqrt(this->area_frame * io_frame.size().area() / 100);
+	//cv::rectangle(io_frame, cv::Rect2f{100, 100, len, len}, {0, 100, 255}, 2);*/
+
+	cv::aruco::drawDetectedMarkers(io_frame, this->corners, this->ids);
+	//cv::aruco::estimatePoseSingleMarkers(this->corners, 1.f, )
+}
+
 void VisionTool::OnUIRender() {
 	if (this->s_tool_enable) {
 		ImGui::Begin("Vision Options"); {
@@ -35,14 +119,16 @@ void VisionTool::OnUIRender() {
 						"\nFPS: " << this->cap_src.get(cv::CAP_PROP_FPS) <<
 						"\nFrame count: " << this->cap_src.get(cv::CAP_PROP_FRAME_COUNT) <<
 						"\nFrame number: " << this->cap_src.get(cv::CAP_PROP_POS_FRAMES) << std::endl;
+					this->fps_override = this->cap_src.get(cv::CAP_PROP_FPS);
 				}/* else {
 					this->cap_src.release();
 				}*/
-			} ImGui::SameLine();
-			if (ImGui::Button("Grab Next")) {
-				this->s_capturing = false;
-				this->s_grabnext = true;
 			}
+				ImGui::SameLine();
+				if (ImGui::Button("Grab Next")) {
+					this->s_capturing = false;
+					this->s_grabnext = true;
+				}
 			if (ImGui::Button("Load Video")) {
 				if (openFile(this->vfile)) {
 					this->s_capturing = false;
@@ -74,12 +160,29 @@ void VisionTool::OnUIRender() {
 			if (ImGui::Checkbox("Enable Upscale", &this->s_upscale_viewport)) { this->view_size = { 0 }; }
 			ImGui::Checkbox("Loop Video", &this->s_loopmode);
 			ImGui::Checkbox("Limit Framerate", &this->s_limit_frate);
+				ImGui::SameLine();
+				ImGui::InputInt("##", &this->fps_override);
 			ImGui::Checkbox("Display FPS", &this->s_fps_display);
-			ImGui::Spacing();
 			ImGui::Checkbox("Enable Processing", &this->s_enable_proc);
-			ImGui::SliderFloat("Alpha", &this->alpha, 0.f, 1.f, "%.3f", 1);
-			ImGui::SliderFloat("Beta", &this->beta, 0.f, 1.f, "%.3f", 1);
-			ImGui::SliderFloat("Gamma", &this->gamma, 0.f, 100.f, "%.3f", 1);
+			ImGui::Separator();
+
+			if (!this->s_enable_proc) { ImGui::BeginDisabled(); }
+
+			VPipeline* p;
+			for (size_t i = 0; i < this->pipelines.size(); i++) {
+				p = this->pipelines[i];
+				ImGui::Checkbox(p->name.c_str(), &p->s_window_enabled);
+					ImGui::SameLine();
+					if (ImGui::Button("Set Active")) { this->idx = i; }
+				if (p->s_window_enabled) {
+					ImGui::Begin(("Vision Pipeline: " + p->name).c_str());
+					this->pipelines[i]->invokeGui();
+					ImGui::End();
+				}
+			}
+
+			if (!this->s_enable_proc) { ImGui::EndDisabled(); }
+
 			ImGui::EndChild();
 		} ImGui::End();
 		ImGui::Begin("Viewport"); {
@@ -117,7 +220,7 @@ void VisionTool::imgPipeline(VisionTool* that, const bool& state) {
 				}
 				if (!that->cap_src.grab()) { goto wait; }
 				if (that->s_limit_frate) {
-					std::this_thread::sleep_for(std::chrono::microseconds((uint)(1e6 / that->cap_src.get(cv::CAP_PROP_FPS))) - (hrc::now() - ref));
+					std::this_thread::sleep_for(std::chrono::microseconds((uint)(1e6 / (that->fps_override > 0 ? that->fps_override : that->cap_src.get(cv::CAP_PROP_FPS)))) - (hrc::now() - ref));
 				}
 			}
 			else if (that->s_capturing && that->cap_src.grab()) {}
@@ -133,28 +236,17 @@ void VisionTool::imgPipeline(VisionTool* that, const bool& state) {
 			//	keep_current = false;
 				if (that->raw_frame.size() != that->raw_size.cvsize) {
 					that->raw_size.cvsize = that->raw_frame.size();
-					that->resizeProcBuffers(that->raw_size);
+					that->rgba_out = cv::Mat{ that->raw_size.cvsize, CV_8UC4 };
 				}
 			//} else {
 			//	std::this_thread::sleep_for(std::chrono::milliseconds(20) - (hrc::now() - ref));
 			//}
 			
-			if(that->s_enable_proc) {
-				cv::split(that->raw_frame, that->channels);
-				cv::addWeighted(that->channels[0], that->alpha, that->channels[1], that->beta, that->gamma, that->binary);
-				cv::subtract(that->channels[2], that->binary, that->binary);
+			if(that->s_enable_proc && that->pipelines.size() > 0) {
+				that->pipelines[that->idx]->process(that->raw_frame);
+			} 
+			cv::cvtColor(that->raw_frame, that->rgba_out, cv::COLOR_BGR2RGBA);
 
-				cv::aruco::detectMarkers(that->raw_frame, that->markers_dict, that->corners, that->ids);
-				cv::findContours(that->binary, that->contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-
-				cv::cvtColor(that->binary, that->proc, cv::COLOR_GRAY2BGR);
-				cv::aruco::drawDetectedMarkers(that->proc, that->corners, that->ids);
-				cv::drawContours(that->proc, that->contours, -1, { 0, 100, 255 }, 2);
-				cv::cvtColor(that->proc, that->rgba_out, cv::COLOR_BGR2RGBA);
-
-			} else {
-				cv::cvtColor(that->raw_frame, that->rgba_out, cv::COLOR_BGR2RGBA);
-			}
 			if (that->s_fps_display) {
 				cv::putText(that->rgba_out, "FPS: " + std::to_string(that->fps), { 10, 20 }, cv::FONT_HERSHEY_DUPLEX, 0.5, { 0, 255, 0, 255 });
 			}

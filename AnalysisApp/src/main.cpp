@@ -10,6 +10,8 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
 
 	Walnut::Application* app = new Walnut::Application(window);
 	std::shared_ptr<VisionTool> vis{ std::make_shared<VisionTool>() };
+	static Vision1 pipe;
+	vis->addPipeline(&pipe);
 	app->PushLayer(vis);
 	static bool demo{ false };
 	app->SetMenubarCallback([app, vis](){
