@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+#include "opencv2/aruco/charuco.hpp"
+
 #include "util.h"
 
 
@@ -30,7 +32,7 @@ void VisionTool::addPipelines(std::initializer_list<VPipeline*> v) {
 	this->pipelines.insert(this->pipelines.end(), v.begin(), v.end());
 }
 
-void Vision1::invokeGui() {
+void Analyzer::invokeGui() {
 	ImGui::SliderInt("Hue", &this->hue_rotate, 0, 180);
 	ImGui::SliderFloat("Alpha", &this->alpha, 0.f, 1.f, "%.3f");
 	ImGui::SliderFloat("Beta", &this->beta, 0.f, 1.f, "%.3f");
@@ -53,9 +55,9 @@ void Vision1::invokeGui() {
 	}
 
 }
-void Vision1::process(cv::Mat& io_frame) {
+void Analyzer::process(cv::Mat& io_frame) {
 	cv::cvtColor(io_frame, this->proc, cv::COLOR_BGR2HSV);
-	for (size_t i = 0; i < this->proc.size().area(); i ++) {
+	for (size_t i = 0; i < this->proc.size().area(); i++) {
 		(this->proc.data[i * 3] += this->hue_rotate) %= 180;
 	}
 	cv::cvtColor(this->proc, this->proc, cv::COLOR_HSV2BGR);
@@ -99,6 +101,174 @@ void Vision1::process(cv::Mat& io_frame) {
 
 	cv::aruco::drawDetectedMarkers(io_frame, this->corners, this->ids);
 	//cv::aruco::estimatePoseSingleMarkers(this->corners, 1.f, )
+}
+
+void CalibAruco::invokeGui() {
+	if (ImGui::InputInt2("Squares X/Y", this->sq_arr) ||
+		ImGui::InputFloat2("Length [squares/markers]", this->len_arr, "%.2f")
+	) { this->recreateBoard(); }
+	if (ImGui::Checkbox("Fixed AR", &this->s_fix_aspect_ratio)) { this->calib_flags ^= cv::CALIB_FIX_ASPECT_RATIO; }
+	if (this->s_fix_aspect_ratio) {
+		ImGui::SameLine();
+		ImGui::InputInt2("W/H", this->fixed_ar_wh);
+	}
+	ImGui::Checkbox("Refine Detections", &this->s_apply_refined);
+	if (ImGui::Checkbox("No Tangen Distortion", &this->s_zero_tan_distort)) { this->calib_flags ^= cv::CALIB_ZERO_TANGENT_DIST; }
+	if (ImGui::Checkbox("Fix Principle Point", &this->s_fix_principle_center)) { this->calib_flags ^= cv::CALIB_FIX_PRINCIPAL_POINT; }
+	ImGui::Checkbox("Enable Keyframe Collection", &this->s_enable_collection);
+	ImGui::Text(("Allocations: " + std::to_string(this->imgs.size())).c_str());
+	ImGui::SameLine();
+	if (ImGui::Button("Clear Keyframes")) { this->resetCollection(); }
+	ImGui::Checkbox("Run Calibration each frame", &this->s_calib_every);
+	if (this->imgs.size() == 0) { ImGui::BeginDisabled(); }
+	if (ImGui::Button("Calibrate")) {
+		std::lock_guard<std::mutex> vec_lock(this->buff_mutex);
+		this->calibRoutine();
+	}
+	ImGui::SameLine();
+	if (!this->s_valid_calib) { ImGui::BeginDisabled(); }
+	if (ImGui::Button("Save Calibration")) {
+		std::string out;
+		if (saveFile(out)) {
+			cv::FileStorage fs(out, cv::FileStorage::WRITE);
+			if (fs.isOpened()) {
+				fs << "image_width" << this->imgs[0].size().width;
+				fs << "image_height" << this->imgs[0].size().height;
+
+				if (this->calib_flags & cv::CALIB_FIX_ASPECT_RATIO) fs << "aspectRatio" << ((float)this->fixed_ar_wh[0] / this->fixed_ar_wh[1]);
+
+				fs << "flags" << this->calib_flags;
+				fs << "camera_matrix" << this->cam_matx;
+				fs << "distortion_coefficients" << this->cam_dist;
+				//fs << "avg_reprojection_error" << totalAvgErr;
+			}
+		}
+	}
+	if (!this->s_valid_calib) { ImGui::EndDisabled(); }
+	if (this->imgs.size() == 0) { ImGui::EndDisabled(); }
+
+	ImGui::Separator();
+
+	if (ImGui::ListBox("Marker Dictionary", &this->dict_id, CalibAruco::dict_names, 22)) {
+		if (this->dict_id != 22) {
+			this->marker_dict = cv::aruco::getPredefinedDictionary(this->dict_id);
+			this->recreateBoard();
+		} else if(!this->dict_custom.empty()) {
+			cv::FileStorage fs(this->dict_custom, cv::FileStorage::READ);
+			this->marker_dict->readDictionary(fs.root());
+			this->recreateBoard();
+		}
+	}
+	if (ImGui::Button("Load Custom Dictionary")) {
+		if (openFile(this->dict_custom)) {
+			cv::FileStorage fs(this->dict_custom, cv::FileStorage::READ);
+			if (this->marker_dict->readDictionary(fs.root())) {
+				this->dict_id = 22;
+				this->recreateBoard();
+			}	// else reset?
+		}
+	}
+	ImGui::InputFloat2("Page Size W/H", this->page_size_wh, "%.1f");
+	ImGui::SameLine();
+	ImGui::InputInt("Pixels/Unit", &this->pixels_per_unit);
+	if (ImGui::Button("View Board")) {
+
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Save Board")) {
+		std::string f;
+		if (saveFile(f)) {
+			cv::Mat out;
+			int
+				m_x = (page_size_wh[0] - (sq_x * sq_len)) * pixels_per_unit / 2,
+				m_y = (page_size_wh[1] - (sq_y * sq_len)) * pixels_per_unit / 2;
+			this->ch_board->draw(
+				cv::Size2i{ (int)(this->page_size_wh[0] * this->pixels_per_unit), (int)(this->page_size_wh[1] * this->pixels_per_unit) },
+				out, (m_x < m_y ? m_x : m_y)
+			);
+			cv::imwrite(f, out);
+		}
+	}
+
+}
+void CalibAruco::process(cv::Mat& io_frame) {
+	const std::lock_guard<std::mutex> vec_lock(this->buff_mutex);
+	if (this->s_enable_collection) {
+		this->corners.emplace_back();
+		this->ids.emplace_back();
+	}
+	cv::aruco::detectMarkers(io_frame, this->marker_dict, this->corners.back(), this->ids.back());
+	if (this->s_apply_refined) { cv::aruco::refineDetectedMarkers(io_frame, this->board, this->corners.back(), this->ids.back(), this->rejected); }
+	if (this->ids.back().size() > 0) {
+		cv::aruco::interpolateCornersCharuco(this->corners.back(), this->ids.back(), io_frame, this->ch_board, this->ch_corners[0], this->ch_ids[0]);
+		if (ch_corners[0].total() > 0) {
+			if (this->s_enable_collection) {
+				this->imgs.emplace_back(io_frame.clone());
+				if (this->s_calib_every) {
+					double a_re, ch_re;
+					this->calibRoutine(&a_re, &ch_re);
+				}
+			}
+			cv::aruco::drawDetectedCornersCharuco(io_frame, this->ch_corners[0], this->ch_ids[0]);
+			cv::aruco::drawDetectedMarkers(io_frame, this->corners.back());
+		} else if (this->s_enable_collection) {
+			cv::aruco::drawDetectedMarkers(io_frame, this->corners.back());
+			this->corners.pop_back();
+			this->ids.pop_back();
+		} else {
+			cv::aruco::drawDetectedMarkers(io_frame, this->corners.back());
+		}
+	} else if (this->s_enable_collection) {
+		this->corners.pop_back();
+		this->ids.pop_back();
+	}
+}
+void CalibAruco::calibRoutine(double* a_re, double* ch_re) {
+	size_t len = this->imgs.size();
+	if (len > 0) {
+		// lock mutex
+		if (this->s_fix_aspect_ratio) {
+			this->cam_matx = cv::Mat::eye(3, 3, CV_64F);
+			this->cam_matx.at<double>(0, 0) = (float)this->fixed_ar_wh[0] / this->fixed_ar_wh[1];
+		}
+		this->count_per_frame.clear();
+		this->corners_concat.clear();
+		this->ids_concat.clear();
+		this->count_per_frame.reserve(len);
+		for (size_t i = 0; i < len; i++) {
+			this->count_per_frame.push_back((int)this->corners[i].size());
+
+			this->corners_concat.reserve(this->corners_concat.size() + this->count_per_frame.back());
+			this->corners_concat.insert(this->corners_concat.end(), this->corners[i].begin(), this->corners[i].end());
+
+			this->ids_concat.reserve(this->count_per_frame.back());
+			this->ids_concat.insert(this->ids_concat.end(), this->ids[i].begin(), this->ids[i].end());
+		}
+		double aruco = cv::aruco::calibrateCameraAruco(
+			this->corners_concat, this->ids_concat, this->count_per_frame, this->board,
+			this->imgs[0].size(), this->cam_matx, this->cam_dist,
+			cv::noArray(), cv::noArray(), this->calib_flags
+		);
+		if (a_re) { *a_re = aruco; }
+		this->ch_corners.resize(len);
+		this->ch_ids.resize(len);
+		for (size_t i = 0; i < len; i++) {
+			cv::aruco::interpolateCornersCharuco(
+				this->corners[i], this->ids[i], this->imgs[i],
+				this->ch_board, this->ch_corners[i], this->ch_ids[i],
+				this->cam_matx, this->cam_dist
+			);
+		}
+		if (this->ch_corners.size() >= 4) {
+			double charuco = cv::aruco::calibrateCameraCharuco(
+				this->ch_corners, this->ch_ids, this->ch_board,
+				this->imgs[0].size(), this->cam_matx, this->cam_dist,
+				this->rvecs, this->tvecs, this->calib_flags
+			);
+			if (ch_re) { *ch_re = charuco; }
+			this->s_valid_calib = true;
+		}
+	}
 }
 
 void VisionTool::OnUIRender() {
@@ -173,7 +343,9 @@ void VisionTool::OnUIRender() {
 				p = this->pipelines[i];
 				ImGui::Checkbox(p->name.c_str(), &p->s_window_enabled);
 					ImGui::SameLine();
-					if (ImGui::Button("Set Active")) { this->idx = i; }
+					ImGui::PushID(i);
+						if (ImGui::Button("Set Active")) { this->idx = i; }
+					ImGui::PopID();
 				if (p->s_window_enabled) {
 					ImGui::Begin(("Vision Pipeline: " + p->name).c_str());
 					this->pipelines[i]->invokeGui();

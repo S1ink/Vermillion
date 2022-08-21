@@ -46,7 +46,6 @@ struct Circle {
 	};
 };
 
-//class VisionTool;
 class VPipeline {
 	friend class VisionTool;
 public:
@@ -80,10 +79,10 @@ private:
 
 };
 
-class Vision1 : public VPipeline {
+class Analyzer : public VPipeline {
 public:
-	inline Vision1() : VPipeline{"Test Analyzer"} {}
-	~Vision1() = default;
+	inline Analyzer() : VPipeline{"Test Analyzer"} {}
+	~Analyzer() = default;
 
 	virtual void invokeGui() override;
 	virtual void process(cv::Mat& io_frame) override;
@@ -131,6 +130,97 @@ protected:
 		min_rad{ 5 },
 		max_rad{ 20 }
 	;
+
+
+};
+class CalibAruco : public VPipeline {
+public:
+	inline CalibAruco() :
+		VPipeline{"Calibration and Aruco Tool"},
+		marker_dict{ cv::aruco::getPredefinedDictionary(0) }
+	{ this->recreateBoard(); }
+	~CalibAruco() = default;
+
+	virtual void invokeGui() override;
+	virtual void process(cv::Mat& io_frame) override;
+
+	void calibRoutine(double* a_re = nullptr, double* ch_re = nullptr);
+	inline void recreateBoard() {
+		this->ch_board = cv::aruco::CharucoBoard::create(
+			this->sq_x, this->sq_y,
+			this->sq_len, this->marker_len,
+			this->marker_dict
+		);
+		this->board = this->ch_board.staticCast<cv::aruco::Board>();
+	}
+	inline void resetCollection() {
+		const std::lock_guard<std::mutex> vec_lock(this->buff_mutex);
+		this->corners.resize(1);
+		this->ids.resize(1);
+		this->imgs.clear();
+		//this->rvecs.clear();
+		//this->tvecs.clear();
+	}
+
+protected:
+	cv::Ptr<cv::aruco::Dictionary> marker_dict;
+	cv::Ptr<cv::aruco::CharucoBoard> ch_board;
+	cv::Ptr<cv::aruco::Board> board;	// or just convert inline when needed
+
+	struct Anotation {
+		std::vector<std::vector<cv::Point2f> > corners;
+		std::vector<int> ids;
+		cv::Mat img, rvec, tvec;
+	};
+
+	std::vector<std::vector<std::vector<cv::Point2f> > > corners{1};
+	std::vector<std::vector<int> > ids{1};
+	std::vector<cv::Mat> imgs, rvecs, tvecs, ch_corners{1}, ch_ids{1};
+
+	std::vector<std::vector<cv::Point2f> > corners_concat, rejected;
+	std::vector<int> ids_concat, count_per_frame;
+	cv::Mat cam_matx, cam_dist;
+
+	std::mutex buff_mutex;
+
+	std::string dict_custom;
+	union {
+		struct { int sq_x, sq_y; };
+		int sq_arr[2]{5, 7};
+	};
+	union {
+		struct { float sq_len, marker_len; };
+		float len_arr[2]{ 1.f, 0.5f };
+	};
+	int
+		fixed_ar_wh[2]{ 100, 100 },
+		calib_flags{ 0 },
+		dict_id{0},
+		pixels_per_unit{96}
+	;
+	float
+		page_size_wh[2]{8.5f, 11.f}
+	;
+	bool
+		s_apply_refined{false},
+		s_zero_tan_distort{false},
+		s_fix_aspect_ratio{false},
+		s_fix_principle_center{false},
+
+		s_enable_collection{false},
+		s_calib_every{false},
+		s_valid_calib{false}
+	;
+
+	inline static const char* dict_names[22]{
+		"4x4-50", "4x4-100", "4x4-250", "4x4-1000",
+		"5x5-50", "5x5-100", "5x5-250", "5x5-1000",
+		"6x6-50", "6x6-100", "6x6-250", "6x6-1000",
+		"7x7-50", "7x7-100", "7x7-250", "7x7-1000",
+		"Original-1024",
+		"AprilTag-16h5", "AprilTag-25h9", "AprilTag-36h10", "AprilTag-36h11",
+		"Custom"
+	};
 
 
 };
