@@ -113,17 +113,23 @@ void CalibAruco::invokeGui() {
 		ImGui::InputInt2("W/H", this->fixed_ar_wh);
 	}
 	ImGui::Checkbox("Refine Detections", &this->s_apply_refined);
-	if (ImGui::Checkbox("No Tangen Distortion", &this->s_zero_tan_distort)) { this->calib_flags ^= cv::CALIB_ZERO_TANGENT_DIST; }
+	if (ImGui::Checkbox("No Tangent Distortion", &this->s_zero_tan_distort)) { this->calib_flags ^= cv::CALIB_ZERO_TANGENT_DIST; }
 	if (ImGui::Checkbox("Fix Principle Point", &this->s_fix_principle_center)) { this->calib_flags ^= cv::CALIB_FIX_PRINCIPAL_POINT; }
-	ImGui::Checkbox("Enable Keyframe Collection", &this->s_enable_collection);
+	ImGui::Checkbox("Enable Automatic Collection", &this->s_auto_collection);
+	ImGui::SameLine();
+	if (ImGui::Button("Keep Next")) { this->s_keep_next = true; }
 	ImGui::Text(("Allocations: " + std::to_string(this->imgs.size())).c_str());
 	ImGui::SameLine();
 	if (ImGui::Button("Clear Keyframes")) { this->resetCollection(); }
-	ImGui::Checkbox("Run Calibration each frame", &this->s_calib_every);
-	if (this->imgs.size() == 0) { ImGui::BeginDisabled(); }
+	if (this->keyframes == 0) { ImGui::BeginDisabled(); }
 	if (ImGui::Button("Calibrate")) {
-		std::lock_guard<std::mutex> vec_lock(this->buff_mutex);
-		this->calibRoutine();
+		if (!this->s_calib_thread || this->calib_thread.joinable()) {
+			this->calib_thread = std::thread(calibThread, this);
+		}
+	}
+	if (this->s_calib_thread && this->calib_thread.joinable()) {
+		this->calib_thread.join();
+		this->s_calib_thread = false;
 	}
 	ImGui::SameLine();
 	if (!this->s_valid_calib) { ImGui::BeginDisabled(); }
@@ -145,7 +151,7 @@ void CalibAruco::invokeGui() {
 		}
 	}
 	if (!this->s_valid_calib) { ImGui::EndDisabled(); }
-	if (this->imgs.size() == 0) { ImGui::EndDisabled(); }
+	if (this->keyframes == 0) { ImGui::EndDisabled(); }
 
 	ImGui::Separator();
 
@@ -192,40 +198,36 @@ void CalibAruco::invokeGui() {
 
 }
 void CalibAruco::process(cv::Mat& io_frame) {
-	const std::lock_guard<std::mutex> vec_lock(this->buff_mutex);
-	if (this->s_enable_collection) {
-		this->corners.emplace_back();
-		this->ids.emplace_back();
-	}
-	cv::aruco::detectMarkers(io_frame, this->marker_dict, this->corners.back(), this->ids.back());
-	if (this->s_apply_refined) { cv::aruco::refineDetectedMarkers(io_frame, this->board, this->corners.back(), this->ids.back(), this->rejected); }
-	if (this->ids.back().size() > 0) {
-		cv::aruco::interpolateCornersCharuco(this->corners.back(), this->ids.back(), io_frame, this->ch_board, this->ch_corners[0], this->ch_ids[0]);
-		if (ch_corners[0].total() > 0) {
-			if (this->s_enable_collection) {
+	if (!this->s_calib_thread) {
+		const std::lock_guard<std::mutex> vec_lock(this->buff_mutex);
+		// if(this->keyframes != this->corners.size() - 1 || this->keyframes != this->ids.size() - 1) { buffer size error }
+		auto* corners_t = &this->corners.back();
+		auto* ids_t = &this->ids.back();
+		bool appendable{ this->s_auto_collection || this->s_keep_next };
+
+		cv::aruco::detectMarkers(io_frame, this->marker_dict, *corners_t, *ids_t);
+		if (this->s_apply_refined) { cv::aruco::refineDetectedMarkers(io_frame, this->board, *corners_t, *ids_t, this->rejected); }
+
+		if (ids_t->size() >= this->marker_thresh && appendable || ids_t->size() >= 1 && !appendable) {
+			cv::aruco::interpolateCornersCharuco(*corners_t, *ids_t, io_frame, this->ch_board, this->ch_corners[0], this->ch_ids[0]);
+			if (this->ch_corners[0].total() >= this->ch_point_thresh && appendable) {
 				this->imgs.emplace_back(io_frame.clone());
-				if (this->s_calib_every) {
-					double a_re, ch_re;
-					this->calibRoutine(&a_re, &ch_re);
-				}
+				this->corners.emplace_back();
+				this->ids.emplace_back();
+				this->keyframes++;
+				this->s_keep_next = false;
+				corners_t = &this->corners[this->keyframes - 1];
+				ids_t = &this->ids[this->keyframes - 1];
 			}
 			cv::aruco::drawDetectedCornersCharuco(io_frame, this->ch_corners[0], this->ch_ids[0]);
-			cv::aruco::drawDetectedMarkers(io_frame, this->corners.back());
-		} else if (this->s_enable_collection) {
-			cv::aruco::drawDetectedMarkers(io_frame, this->corners.back());
-			this->corners.pop_back();
-			this->ids.pop_back();
-		} else {
-			cv::aruco::drawDetectedMarkers(io_frame, this->corners.back());
 		}
-	} else if (this->s_enable_collection) {
-		this->corners.pop_back();
-		this->ids.pop_back();
+		cv::aruco::drawDetectedMarkers(io_frame, *corners_t);
+	} else {
+		cv::putText(io_frame, "Calibration in Progress", { 40, 20 }, cv::FONT_HERSHEY_DUPLEX, 1.0, { 0, 0, 255 }, 2);
 	}
 }
 void CalibAruco::calibRoutine(double* a_re, double* ch_re) {
-	size_t len = this->imgs.size();
-	if (len > 0) {
+	if (this->keyframes > 0) {
 		// lock mutex
 		if (this->s_fix_aspect_ratio) {
 			this->cam_matx = cv::Mat::eye(3, 3, CV_64F);
@@ -234,10 +236,9 @@ void CalibAruco::calibRoutine(double* a_re, double* ch_re) {
 		this->count_per_frame.clear();
 		this->corners_concat.clear();
 		this->ids_concat.clear();
-		this->count_per_frame.reserve(len);
-		for (size_t i = 0; i < len; i++) {
+		this->count_per_frame.reserve(this->keyframes);
+		for (size_t i = 0; i < this->keyframes; i++) {
 			this->count_per_frame.push_back((int)this->corners[i].size());
-
 			this->corners_concat.reserve(this->corners_concat.size() + this->count_per_frame.back());
 			this->corners_concat.insert(this->corners_concat.end(), this->corners[i].begin(), this->corners[i].end());
 
@@ -250,9 +251,9 @@ void CalibAruco::calibRoutine(double* a_re, double* ch_re) {
 			cv::noArray(), cv::noArray(), this->calib_flags
 		);
 		if (a_re) { *a_re = aruco; }
-		this->ch_corners.resize(len);
-		this->ch_ids.resize(len);
-		for (size_t i = 0; i < len; i++) {
+		this->ch_corners.resize(this->keyframes);
+		this->ch_ids.resize(this->keyframes);
+		for (size_t i = 0; i < this->keyframes; i++) {
 			cv::aruco::interpolateCornersCharuco(
 				this->corners[i], this->ids[i], this->imgs[i],
 				this->ch_board, this->ch_corners[i], this->ch_ids[i],

@@ -158,8 +158,12 @@ public:
 		this->corners.resize(1);
 		this->ids.resize(1);
 		this->imgs.clear();
-		//this->rvecs.clear();
-		//this->tvecs.clear();
+		this->keyframes = 0;
+	}
+	static inline void calibThread(CalibAruco* v) {
+		std::lock_guard<std::mutex> l(v->buff_mutex);
+		v->calibRoutine();
+		v->s_calib_thread = true;
 	}
 
 protected:
@@ -180,8 +184,10 @@ protected:
 	std::vector<std::vector<cv::Point2f> > corners_concat, rejected;
 	std::vector<int> ids_concat, count_per_frame;
 	cv::Mat cam_matx, cam_dist;
+	size_t keyframes{0};
 
 	std::mutex buff_mutex;
+	std::thread calib_thread;
 
 	std::string dict_custom;
 	union {
@@ -196,7 +202,9 @@ protected:
 		fixed_ar_wh[2]{ 100, 100 },
 		calib_flags{ 0 },
 		dict_id{0},
-		pixels_per_unit{96}
+		pixels_per_unit{96},
+		marker_thresh{3},
+		ch_point_thresh{6}
 	;
 	float
 		page_size_wh[2]{8.5f, 11.f}
@@ -207,9 +215,10 @@ protected:
 		s_fix_aspect_ratio{false},
 		s_fix_principle_center{false},
 
-		s_enable_collection{false},
-		s_calib_every{false},
-		s_valid_calib{false}
+		s_auto_collection{false},
+		s_keep_next{false},
+		s_valid_calib{false},
+		s_calib_thread{false}
 	;
 
 	inline static const char* dict_names[22]{
