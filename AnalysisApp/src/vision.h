@@ -17,8 +17,6 @@
 #include "Walnut/Application.h"
 #include "Walnut/Image.h"
 
-#include "nn.h"
-
 
 struct Vec2f {
 	union {
@@ -283,7 +281,7 @@ private:
 
 	std::string vfile;
 	// states
-		bool s_tool_enable{ true };
+		bool s_tool_enable{ false };
 
 		bool s_capturing{ false };
 		bool s_playing{ false };

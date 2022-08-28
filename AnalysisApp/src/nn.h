@@ -24,9 +24,7 @@ template<typename scalar>
 inline static scalar sigmoid_d(scalar x) { return sigmoid(x) * (1 - sigmoid(x)); }
 template<typename scalar>
 inline static scalar hyperbolictan(scalar x) {
-	constexpr if (std::is_floating_point<scalar>::value) {
-		return tanhf(x);
-	}
+	if constexpr (std::is_floating_point<scalar>::value) { return tanhf(x); }
 	return tanh(x);
 }
 template<typename scalar>
@@ -34,7 +32,47 @@ inline static scalar hyperbolictan_d(scalar x) { return 1 - (hyperbolictan(x) * 
 template<typename scalar>
 inline static scalar relu(scalar x) { return x > 0 ? x : 0; }
 template<typename scalar>
-inline static scalar relu_d(scalar x) { return x > 0 ? 1 : 0; }
+inline static scalar relu_d(scalar x) { return x > 0 ? (scalar)1 : (scalar)0; }
+
+
+enum ActivationFunc {
+	SIGMOID,
+	TANH,
+	RELU
+};
+
+template<typename scalar>
+inline static scalar activation(scalar x, ActivationFunc f) {
+	switch (f) {
+		case SIGMOID: return sigmoid<scalar>(x);
+		case TANH: return hyperbolictan<scalar>(x);
+		case RELU: return relu<scalar>(x);
+	}
+}
+template<typename scalar>
+inline static std::function<scalar(scalar)> getFunc(ActivationFunc f) {
+	switch (f) {
+		case SIGMOID: return sigmoid<scalar>;
+		case TANH: return hyperbolictan<scalar>;
+		case RELU: return relu<scalar>;
+	}
+}
+template<typename scalar>
+inline static scalar activation_deriv(scalar x, ActivationFunc f) {
+	switch (f) {
+		case SIGMOID: return sigmoid_d<scalar>(x);
+		case TANH: return hyperbolictan_d<scalar>(x);
+		case RELU: return relu_d<scalar>(x);
+	}
+}
+template<typename scalar>
+inline static std::function<scalar(scalar)> getFuncDeriv(ActivationFunc f) {
+	switch (f) {
+		case SIGMOID: return sigmoid_d<scalar>;
+		case TANH: return hyperbolictan_d<scalar>;
+		case RELU: return relu_d<scalar>;
+	}
+}
 
 
 class NeuralNetwork {
@@ -46,15 +84,23 @@ public:
 
 	NeuralNetwork(
 		const std::vector<size_t>& topo,
-		Scalar_t learning_rate = 0.005
+		Scalar_t learning_rate = 0.005,
+		ActivationFunc func = ActivationFunc::SIGMOID
 	);
 	NeuralNetwork(
 		std::vector<size_t>&& topo,
-		Scalar_t learning_rate = 0.005
+		Scalar_t learning_rate = 0.005,
+		ActivationFunc func = ActivationFunc::SIGMOID
 	);
 	NeuralNetwork(
-		Weights_t&& weights
+		Weights_t&& weights,
+		Scalar_t learning_rate = 0.005,
+		ActivationFunc func = ActivationFunc::SIGMOID
 	);
+
+	void regenerate();
+	void regenerate(std::vector<size_t>&&);
+	void regenerate(Weights_t&&);
 
 	void propegateForward(const VecR& input) const;
 	void propegateBackward(VecR& output);
@@ -69,6 +115,10 @@ public:
 	void export_weights(std::ostream& out);
 	static void parse_weights(std::istream& in, Weights_t& weights);
 
+	void setActivationFunc(ActivationFunc f);
+	inline void setLearningRate(Scalar_t lr) { this->learning_rate = lr; }
+	inline const Scalar_t& getLearningRate() const { return this->learning_rate; }
+
 
 protected:
 	mutable Layers_t neurons_matx;
@@ -76,6 +126,9 @@ protected:
 	Weights_t weights;
 	std::vector<size_t> topology;
 	Scalar_t learning_rate;
+	std::function<Scalar_t(Scalar_t)>
+		activation_func,
+		activation_func_deriv;
 
 
 };
