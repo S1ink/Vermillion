@@ -162,11 +162,11 @@ void NeuralNetwork::propegateForward(const VecR& input) const {
 		).unaryExpr(this->activation_func);	// apply activation func to all neurons in layer
 	}
 }
-void NeuralNetwork::propegateBackward(VecR& output) {
+void NeuralNetwork::propegateBackward(const VecR& output) {
 	this->calcErrors(output);
 	this->updateWeights();
 }
-void NeuralNetwork::calcErrors(VecR& output) {
+void NeuralNetwork::calcErrors(const VecR& output) {
 	(*this->deltas.back()) = output - (*this->neurons_matx.back());	// difference between target and calculated output layer
 	for (size_t i = this->topology.size() - 2; i > 0; i--) {
 		(*this->deltas.at(i)) = (*this->deltas.at(i + 1)) * (this->weights.at(i)->transpose());	// store error for each layer by working backwards
@@ -198,13 +198,13 @@ void NeuralNetwork::updateWeights() {
 		}
 	}
 }
-void NeuralNetwork::train(MultiRow_Uq& data_in, MultiRow_Uq& data_out) {
+void NeuralNetwork::train(const IOList& data_in, const IOList& data_out) {
 	for (size_t i = 0; i < data_in.size(); i++) {
 		this->propegateForward(*data_in.at(i));
 		propegateBackward(*data_out.at(i));
 	}
 }
-void NeuralNetwork::train_verbose(MultiRow_Uq& data_in, MultiRow_Uq& data_out) {
+void NeuralNetwork::train_verbose(const IOList& data_in, const IOList& data_out) {
 	for (size_t i = 0; i < data_in.size(); i++) {
 		std::cout << "Input to neural network is: " << *data_in.at(i) << '\n';
 		this->propegateForward(*data_in.at(i));
@@ -220,16 +220,16 @@ void NeuralNetwork::train_verbose(MultiRow_Uq& data_in, MultiRow_Uq& data_out) {
 		std::cout << "{\n" << *this->weights.at(i) << "\n}\n";
 	}*/
 }
-void NeuralNetwork::train_graph(MultiRow_Uq& data_in, MultiRow_Uq& data_out, std::vector<float>& progress) {
-	progress.clear();
+void NeuralNetwork::train_graph(const IOList& data_in, const IOList& data_out, std::vector<float>& progress) {
+	//progress.clear();
 	for (size_t i = 0; i < data_in.size(); i++) {
 		this->propegateForward(*data_in.at(i));
-		propegateBackward(*data_out.at(i));
+		this->propegateBackward(*data_out.at(i));
 		progress.push_back(std::sqrt(
 			(*this->deltas.back()).dot(*this->deltas.back()) / this->deltas.back()->size()));
 	}
 }
-float NeuralNetwork::train_instance(VecR& in, VecR& out) {
+float NeuralNetwork::train_instance(const VecR& in, const VecR& out) {
 	this->propegateForward(in);
 	propegateBackward(out);
 	return std::sqrt(
@@ -297,4 +297,62 @@ void NeuralNetwork::parse_weights(std::istream& in, Weights_t& weights) {
 void NeuralNetwork::setActivationFunc(ActivationFunc f) {
 	this->activation_func = getFunc<Scalar_t>(f);
 	this->activation_func_deriv = getFuncDeriv<Scalar_t>(f);
+}
+
+
+void NeuralNetwork::genFuncData(DataSet& d, size_t s, IOFunc& f) const {
+	this->genFunc(f);
+	d.first.clear();
+	d.first.reserve(s);
+	d.second.clear();
+	d.second.reserve(s);
+	size_t in = this->inputs(), out = this->outputs();
+	for (size_t i = 0; i < s; i++) {
+		d.first.emplace_back(std::make_unique<VecR>(in));
+		d.second.emplace_back(std::make_unique<VecR>(out));
+		d.first.back()->setRandom();
+		if (!f(*d.first.back(), *d.second.back())) {
+			std::cout << "Error generating dataset: idx[" << i << "]\n";
+		}
+	}
+}
+void NeuralNetwork::genData(DataSet& d, size_t s, const IOFunc& f) const {
+	if (this->compatibleFunc(f)) {
+		d.first.clear();
+		d.first.reserve(s);
+		d.second.clear();
+		d.second.reserve(s);
+		size_t in = this->inputs(), out = this->outputs();
+		for (size_t i = 0; i < s; i++) {
+			d.first.emplace_back(std::make_unique<VecR>(in));
+			d.second.emplace_back(std::make_unique<VecR>(out));
+			d.first.back()->setRandom();
+			if (!f(*d.first.back(), *d.second.back())) {
+				std::cout << "Error generating dataset: idx[" << i << "]\n";
+			}
+		}
+	} else {
+		std::cout << "Incompatible function IO size for generating dataset\n";
+	}
+}
+
+void NeuralNetwork::exportData(DataSet& d, std::ostream& o) {
+	for (size_t s = 0; s < d.first.size(); s++) {
+		VecR& ins = *d.first[s];
+		VecR& outs = *d.second[s];
+		for (size_t i = 0; i < ins.size(); i++) {
+			o << ins[i];
+			if (i != ins.size() - 1) { o << ", "; }
+		}
+		o << " : ";
+		for (size_t i = 0; i < outs.size(); i++) {
+			o << outs[i];
+			if (i != outs.size() - 1) { o << ", "; }
+		}
+		o << "\n";
+	}
+	o.flush();
+}
+void NeuralNetwork::importData(DataSet& d, std::istream& i) {
+
 }
