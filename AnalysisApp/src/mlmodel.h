@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "imgui.h"
+#include "implot/implot.h"
 
 #include "Walnut/Layer.h"
 #include "Walnut/Image.h"
@@ -31,15 +32,17 @@ protected:
 	static void trainThread(MlTool*);
 
 private:
-	std::vector<float> progress;
+	std::vector<float> epochs_avg, epochs_high, epochs_low, epoch_last;
 	std::vector<size_t> topo_edit{this->topology};
 	IOFunc rfunc;
 	DataSet dataset;
 	std::thread trainer;
 	std::mutex train_mutex;
 	
+	ImPlotColormap primary_theme{ImPlotColormap_Cool}, secondary_theme{ImPlotColormap_Hot};
 	int
 		activ_f_idx{ 0 },
+		section_idx{ 0 },
 		layers_drag{(int)this->topology.size()},
 		data_size{10},
 		epochs{0}
@@ -49,8 +52,11 @@ private:
 	;
 	bool
 		s_tool_enable{ true },
+		s_show_network{ false },
+		s_show_graphs{ false },
+
 		s_regen_avail{ false },
-		s_show_weights{ false },
+
 		s_training_thread{ false },
 		s_training_loop{ false }
 	;

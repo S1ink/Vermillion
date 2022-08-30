@@ -105,7 +105,7 @@ void Analyzer::process(cv::Mat& io_frame) {
 
 void CalibAruco::invokeGui() {
 	if (ImGui::InputInt2("Squares X/Y", this->sq_arr) ||
-		ImGui::InputFloat2("Length [squares/markers]", this->len_arr, "%.2f")
+		ImGui::InputFloat2("Length [squares/markers]", this->len_arr, "%.3f")
 	) { this->recreateBoard(); }
 	if (ImGui::Checkbox("Fixed AR", &this->s_fix_aspect_ratio)) { this->calib_flags ^= cv::CALIB_FIX_ASPECT_RATIO; }
 	if (this->s_fix_aspect_ratio) {

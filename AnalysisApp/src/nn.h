@@ -168,8 +168,12 @@ public:
 	inline const Scalar_t& getLearningRate() const { return this->learning_rate; }
 	inline size_t inputs() const { return this->topology.front(); }
 	inline size_t outputs() const { return this->topology.back(); }
+	//size_t computeTotalSize() const;
+	size_t computeHorizontalUnits() const;
+	//size_t computeVerticalUnits() const;
 
 	inline bool compatibleFunc(const IOFunc& f) const { return this->inputs() == f.inputs() && this->outputs() == f.outputs(); }
+	inline bool compatibleDataSet(const DataSet& d) const { return this->inputs() == d.first.size() && this->outputs() == d.second.size(); }
 
 	inline void genFunc(IOFunc& f) const { f.gen(this->inputs(), this->outputs()); }
 	void genFuncData(DataSet& d, size_t s, IOFunc& f = IOFunc{}) const;

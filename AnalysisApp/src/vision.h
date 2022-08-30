@@ -190,11 +190,11 @@ protected:
 	std::string dict_custom;
 	union {
 		struct { int sq_x, sq_y; };
-		int sq_arr[2]{5, 7};
+		int sq_arr[2]{6, 8};
 	};
 	union {
 		struct { float sq_len, marker_len; };
-		float len_arr[2]{ 1.f, 0.5f };
+		float len_arr[2]{ 1.25f, 0.625f };
 	};
 	int
 		fixed_ar_wh[2]{ 100, 100 },

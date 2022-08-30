@@ -107,6 +107,7 @@ void NeuralNetwork::regenerate(Weights_t&& weights) {
 			this->topology.push_back(
 				this->weights.at(i)->cols() - 1U );
 		}
+		this->topology.back()++;
 		for (size_t i = 0; i < this->topology.size(); i++) {	// same as above
 			if (i == topology.size() - 1) {
 				this->neurons_matx.emplace_back(
@@ -297,6 +298,20 @@ void NeuralNetwork::parse_weights(std::istream& in, Weights_t& weights) {
 void NeuralNetwork::setActivationFunc(ActivationFunc f) {
 	this->activation_func = getFunc<Scalar_t>(f);
 	this->activation_func_deriv = getFuncDeriv<Scalar_t>(f);
+}
+//size_t NeuralNetwork::computeTotalSize() const {
+//	size_t ret{ 0 };
+//	for (size_t i = 0; i < this->weights.size(); i++) {
+//		ret += this->weights[i]->size();
+//	}
+//	return ret;
+//}
+size_t NeuralNetwork::computeHorizontalUnits() const {
+	size_t ret{ this->topology.size() };
+	for (size_t i = 0; i < this->weights.size(); i++) {
+		ret += this->weights[i]->cols();
+	}
+	return ret;
 }
 
 
