@@ -1,5 +1,7 @@
 #define INCLUDE_IMPLOT
 
+#include <thread>
+
 #include "Walnut/Application.h"
 #include "Walnut/EntryPoint.h"
 
@@ -9,7 +11,19 @@
 #include "mlmodel.h"
 
 
+void tmain(int argc, char** argv) {
+	std::cout << tanhf(INFINITY) << std::endl;
+	std::cout << tanhf(-INFINITY) << std::endl;
+	std::cout << sigmoid(INFINITY) << std::endl;
+	std::cout << sigmoid(-INFINITY) << std::endl;
+	std::cout << relu(INFINITY) << std::endl;
+	std::cout << relu(-INFINITY) << std::endl;
+}
+
+
 Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
+
+	std::thread(tmain, argc, argv).detach();
 
 	const Walnut::ApplicationSpecification window{ "Vermillion [ALPHA]", 1280, 720 };
 

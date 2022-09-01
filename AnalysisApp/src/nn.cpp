@@ -5,8 +5,8 @@
 
 void NeuralNetwork::regenerate() {
 	this->neurons_matx.clear();
-	this->cache_neurons.clear();
-	this->deltas.clear();
+	this->cache_matx.clear();
+	this->errors.clear();
 	this->weights.clear();
 
 	for (size_t i = 0; i < this->topology.size(); i++) {
@@ -19,15 +19,15 @@ void NeuralNetwork::regenerate() {
 		}
 		// topo{2, 3, 1} -> neurons{3, 4, 1}
 
-		this->cache_neurons.emplace_back(	// rvecs of the size of current neuron layer amount (?)
+		this->cache_matx.emplace_back(	// rvecs of the size of current neuron layer amount (?)
 			std::make_unique<VecR>(this->neurons_matx.back()->size())	);	// changed from 'neurons_matx.size()'
-		this->deltas.emplace_back(			// ^^^
+		this->errors.emplace_back(			// ^^^
 			std::make_unique<VecR>(this->neurons_matx.back()->size())	);	// '''
 		// topo{2, 3, 1} -> cache/delta{1, 2, 3} [x] -> cache/delta{3, 4, 1}
 
 		if (i != this->topology.size() - 1) {	// not last idx
 			this->neurons_matx.back()->coeffRef(this->topology.at(i)) = 1.0;	// last coeff(bias) in layer rvec = 1.0
-			this->cache_neurons.back()->coeffRef(this->topology.at(i)) = 1.0;	// accessing out of bounds?
+			this->cache_matx.back()->coeffRef(this->topology.at(i)) = 1.0;	// accessing out of bounds?
 		}
 		/*
 		* topo{2, 3, 1} ->
@@ -62,9 +62,10 @@ void NeuralNetwork::regenerate() {
 				this->weights.emplace_back(
 					std::make_unique<Matrix>(
 						this->topology.at(i - 1) + 1,	// last layer size plus 1
-						this->topology.at(i)			// this layer size (no bias)
+						this->topology.at(i)			// this layer size (no bias in output layer)
 					));
 				this->weights.back()->setRandom();	// assign random starting values
+				this->weights.back()->row(this->weights.back()->rows() - 1).setZero();
 			}
 		}
 		/*
@@ -99,8 +100,8 @@ void NeuralNetwork::regenerate(Weights_t&& weights) {
 		this->weights = std::move(weights);
 		this->topology.clear();
 		this->neurons_matx.clear();
-		this->cache_neurons.clear();
-		this->deltas.clear();
+		this->cache_matx.clear();
+		this->errors.clear();
 
 		this->topology.push_back( this->weights.at(0)->rows() - 1U );
 		for (size_t i = 0; i < this->weights.size(); i++) {	// generate topo using the inverse of weight generation above
@@ -117,16 +118,31 @@ void NeuralNetwork::regenerate(Weights_t&& weights) {
 					std::make_unique<VecR>(this->topology.at(i) + 1)	);
 			}
 
-			this->cache_neurons.emplace_back(
+			this->cache_matx.emplace_back(
 				std::make_unique<VecR>(this->neurons_matx.back()->size())	);
-			this->deltas.emplace_back(
+			this->errors.emplace_back(
 				std::make_unique<VecR>(this->neurons_matx.back()->size())	);
 
 			if (i != this->topology.size() - 1) {
 				this->neurons_matx.back()->coeffRef(this->topology.at(i)) = 1.0;
-				this->cache_neurons.back()->coeffRef(this->topology.at(i)) = 1.0;
+				this->cache_matx.back()->coeffRef(this->topology.at(i)) = 1.0;
 			}
 
+		}
+	}
+}
+
+void NeuralNetwork::remix() {
+	for (size_t i = 0; i < this->weights.size(); i++) {
+		this->weights[i]->setRandom();
+		if (i != this->weights.size() - 1) {
+			this->weights[i]->col(this->weights[i]->cols() - 1).setZero();
+			this->weights[i]->coeffRef(
+				this->weights[i]->rows() - 1,
+				this->weights[i]->cols() - 1
+			) = 1.0;
+		} else {
+			this->weights.back()->row(this->weights.back()->rows() - 1).setZero();
 		}
 	}
 }
@@ -152,15 +168,15 @@ NeuralNetwork::NeuralNetwork(
 
 
 void NeuralNetwork::propegateForward(const VecR& input) const {
-	this->neurons_matx.front()->block(
-		0, 0, 1, this->neurons_matx.front()->size() - 1) = input;	// set the first neuron layer to input
-
+	this->neurons_matx.front()->block(0, 0, 1, this->neurons_matx.front()->cols() - 1) = input;	// set the first neuron layer to input
 	for (size_t i = 1; i < this->topology.size(); i++) {	// iterate through remaining layers
-		(*this->neurons_matx.at(i)) =
-			(*this->neurons_matx.at(i - 1)) * (*this->weights.at(i - 1));	// fill next neuron layer with previous * weights(connecting the 2 layers)
-		this->neurons_matx.at(i)->block(
-			0, 0, 1, this->topology.at(i)
-		).unaryExpr(this->activation_func);	// apply activation func to all neurons in layer
+		if (i != this->topology.size() - 1) {
+			*this->cache_matx[i] = (*this->neurons_matx[i - 1]) * (*this->weights[i - 1]);	// fill next neuron layer with previous * weights(connecting the 2 layers)
+			this->neurons_matx[i]->block(0, 0, 1, this->neurons_matx[i]->cols() - 1) =
+				this->cache_matx[i]->block(0, 0, 1, this->cache_matx[i]->cols() - 1).unaryExpr(this->activation_func);	// apply activation func to all neurons in layer
+		} else {
+			*this->neurons_matx[i] = (*this->neurons_matx[i - 1]) * (*this->weights[i - 1]);
+		}
 	}
 }
 void NeuralNetwork::propegateBackward(const VecR& output) {
@@ -168,35 +184,54 @@ void NeuralNetwork::propegateBackward(const VecR& output) {
 	this->updateWeights();
 }
 void NeuralNetwork::calcErrors(const VecR& output) {
-	(*this->deltas.back()) = output - (*this->neurons_matx.back());	// difference between target and calculated output layer
+	*this->errors.back() =
+		(output - *this->neurons_matx.back())/*.array() *
+		this->cache_matx.back()->unaryExpr(this->activation_func_deriv).array()*/;
 	for (size_t i = this->topology.size() - 2; i > 0; i--) {
-		(*this->deltas.at(i)) = (*this->deltas.at(i + 1)) * (this->weights.at(i)->transpose());	// store error for each layer by working backwards
+		(*this->errors[i]) =
+			((*this->errors[i + 1]) * (this->weights[i]->transpose())).array() *
+			this->cache_matx[i]->unaryExpr(this->activation_func_deriv).array();	// store error for each layer by working backwards
+		if (!this->errors[i]->allFinite()) {
+			std::cout << "CalcErrors failure: NaN detected. Aborting." << std::endl;
+			this->dump(std::cout);
+			abort();
+		}
 	}
 }
 void NeuralNetwork::updateWeights() {
 	for (size_t i = 0; i < this->topology.size() - 1; i++) {
-		if (i != this->topology.size() - 1) {
-			for (size_t c = 0; c < this->weights.at(i)->cols() - 1; c++) {
-				for (size_t r = 0; r < this->weights.at(i)->rows(); r++) {
-					this->weights.at(i)->coeffRef(r, c) +=
+//		if (i != this->topology.size() - 2) {
+			for (size_t c = 0; c < this->weights[i]->cols() - (i != this->topology.size() - 2); c++) {	// skip last col exept on last matx
+				for (size_t r = 0; r < this->weights[i]->rows() - 1; r++) {	// skip last row on last matx
+					this->weights[i]->coeffRef(r, c) +=
 						this->learning_rate *
-						this->deltas.at(i + 1)->coeffRef(c) *
-						this->activation_func_deriv(this->cache_neurons.at(i + 1)->coeffRef(c)) *
-						this->neurons_matx.at(i)->coeffRef(r);
+						this->errors[i + 1]->coeff(c) *
+						//this->activation_func_deriv(this->cache_matx[i + 1]->coeffRef(c)) *
+						this->neurons_matx[i]->coeff(r);	// for biases delete this part, just add lr * err
+						// also subtract regularization value
+				}
+				if (i != this->topology.size() - 2) {
+					this->weights[i]->coeffRef(this->weights[i]->rows() - 1, c) +=
+						this->learning_rate * this->errors[i + 1]->coeff(c);
 				}
 			}
-		}
-		else {
-			for (size_t c = 0; c < this->weights.at(i)->cols(); c++) {
-				for (size_t r = 0; r < this->weights.at(i)->rows(); r++) {
-					this->weights.at(i)->coeffRef(r, c) +=
-						this->learning_rate *
-						this->deltas.at(i + 1)->coeffRef(c) *
-						this->activation_func_deriv(this->cache_neurons.at(i + 1)->coeffRef(c)) *
-						this->neurons_matx.at(i)->coeffRef(r);
-				}
+			if (!this->weights[i]->allFinite()) {
+				std::cout << "UpdateWeights failure: NaN detected. Aborting." << std::endl;
+				this->dump(std::cout);
+				abort();
 			}
-		}
+//		}
+		//else {
+		//	for (size_t c = 0; c < this->weights[i]->cols(); c++) {
+		//		for (size_t r = 0; r < this->weights[i]->rows(); r++) {
+		//			this->weights[i]->coeffRef(r, c) +=
+		//				this->learning_rate *
+		//				this->errors[i + 1]->coeff(c) *
+		//				//this->activation_func_deriv(this->cache_matx[i + 1]->coeffRef(c)) *
+		//				this->neurons_matx[i]->coeff(r);
+		//		}
+		//	}
+		//}
 	}
 }
 void NeuralNetwork::train(const IOList& data_in, const IOList& data_out) {
@@ -213,7 +248,7 @@ void NeuralNetwork::train_verbose(const IOList& data_in, const IOList& data_out)
 			"\nOutput produced is: " << *this->neurons_matx.back() << '\n';
 		propegateBackward(*data_out.at(i));
 		std::cout << "Itr: " << i << " - MSE: " << std::sqrt(
-			(*this->deltas.back()).dot(*this->deltas.back()) / this->deltas.back()->size()
+			(*this->errors.back()).dot(*this->errors.back()) / this->errors.back()->size()
 		) << '\n' << std::endl;
 	}
 	/*std::cout << "Weights:\n";
@@ -227,14 +262,14 @@ void NeuralNetwork::train_graph(const IOList& data_in, const IOList& data_out, s
 		this->propegateForward(*data_in.at(i));
 		this->propegateBackward(*data_out.at(i));
 		progress.push_back(std::sqrt(
-			(*this->deltas.back()).dot(*this->deltas.back()) / this->deltas.back()->size()));
+			(*this->errors.back()).dot(*this->errors.back()) / this->errors.back()->size()));
 	}
 }
 float NeuralNetwork::train_instance(const VecR& in, const VecR& out) {
 	this->propegateForward(in);
 	propegateBackward(out);
 	return std::sqrt(
-		(*this->deltas.back()).dot(*this->deltas.back()) / this->deltas.back()->size());
+		(*this->errors.back()).dot(*this->errors.back()) / this->errors.back()->size());
 }
 void NeuralNetwork::inference(const VecR& in, VecR& out) const {
 	this->propegateForward(in);
@@ -370,4 +405,28 @@ void NeuralNetwork::exportData(DataSet& d, std::ostream& o) {
 }
 void NeuralNetwork::importData(DataSet& d, std::istream& i) {
 
+}
+
+void NeuralNetwork::dump(std::ostream& out) {
+	out << "Weights:\n";
+	for (size_t i = 0; i < this->weights.size(); i++) {
+		out << '[' <<  *this->weights[i] << "]\n";
+	}
+	out.flush();
+	out << "\nNeurons:\n";
+	for (size_t i = 0; i < this->neurons_matx.size(); i++) {
+		out << '[' << *this->neurons_matx[i] << "]\n";
+	}
+	out.flush();
+	out << "\nCaches:\n";
+	for (size_t i = 0; i < this->neurons_matx.size(); i++) {
+		out <<  '[' << *this->cache_matx[i] << "]\n";
+	}
+	out.flush();
+	out << "\nDeltas:\n";
+	for (size_t i = 0; i < this->errors.size(); i++) {
+		out << '[' << *this->errors[i] << "]\n";
+	}
+	out << "\n\n";
+	out.flush();
 }

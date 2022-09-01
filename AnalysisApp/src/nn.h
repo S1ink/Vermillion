@@ -29,17 +29,36 @@ inline static scalar hyperbolictan(scalar x) {
 	return tanh(x);
 }
 template<typename scalar>
+inline static scalar linear(scalar x) { return x; }
+template<typename scalar>
 inline static scalar hyperbolictan_d(scalar x) { return 1 - (hyperbolictan(x) * hyperbolictan(x)); }
 template<typename scalar>
 inline static scalar relu(scalar x) { return x > 0 ? x : 0; }
 template<typename scalar>
 inline static scalar relu_d(scalar x) { return x > 0 ? (scalar)1 : (scalar)0; }
+template<typename scalar>
+inline static scalar linear_d(scalar x) { return (scalar)1; }
+
+template<typename scalar>
+inline static scalar reg_L1(scalar w) { return abs(w); }
+template<typename scalar>
+inline static scalar reg_L2(scalar w) { return 0.5 * w * w; }
+template<typename scalar>
+inline static scalar reg_L1_d(scalar w) { return w < 0 ? -1 : (w > 0 ? 1 : 0); }
+template<typename scalar>
+inline static scalar reg_L2_d(scalar w) { return w; }
 
 
 enum ActivationFunc {
 	SIGMOID,
 	TANH,
-	RELU
+	RELU,
+	LINEAR
+};
+enum Regularization{
+	NONE,
+	L1,
+	L2
 };
 
 template<typename scalar>
@@ -48,6 +67,7 @@ inline static scalar activation(scalar x, ActivationFunc f) {
 		case SIGMOID: return sigmoid<scalar>(x);
 		case TANH: return hyperbolictan<scalar>(x);
 		case RELU: return relu<scalar>(x);
+		case LINEAR: return linear<scalar>(x);
 	}
 }
 template<typename scalar>
@@ -56,6 +76,7 @@ inline static std::function<scalar(scalar)> getFunc(ActivationFunc f) {
 		case SIGMOID: return sigmoid<scalar>;
 		case TANH: return hyperbolictan<scalar>;
 		case RELU: return relu<scalar>;
+		case LINEAR: return linear<scalar>;
 	}
 }
 template<typename scalar>
@@ -64,6 +85,7 @@ inline static scalar activation_deriv(scalar x, ActivationFunc f) {
 		case SIGMOID: return sigmoid_d<scalar>(x);
 		case TANH: return hyperbolictan_d<scalar>(x);
 		case RELU: return relu_d<scalar>(x);
+		case LINEAR: return 1;
 	}
 }
 template<typename scalar>
@@ -72,6 +94,7 @@ inline static std::function<scalar(scalar)> getFuncDeriv(ActivationFunc f) {
 		case SIGMOID: return sigmoid_d<scalar>;
 		case TANH: return hyperbolictan_d<scalar>;
 		case RELU: return relu_d<scalar>;
+		case LINEAR: return linear<scalar>;
 	}
 }
 
@@ -145,6 +168,8 @@ public:
 	void regenerate(std::vector<size_t>&&);
 	void regenerate(Weights_t&&);
 
+	void remix();
+
 	void propegateForward(const VecR& input) const;
 	void propegateBackward(const VecR& output);
 	void calcErrors(const VecR& output);
@@ -182,16 +207,21 @@ public:
 	static void exportData(DataSet& d, std::ostream& o);
 	static void importData(DataSet& d, std::istream& i);
 
+	void dump(std::ostream&);
+
 
 protected:
-	mutable Layers_t neurons_matx;
-	Layers_t cache_neurons, deltas;
-	Weights_t weights;
 	std::vector<size_t> topology;
 	Scalar_t learning_rate;
 	std::function<Scalar_t(Scalar_t)>
 		activation_func,
 		activation_func_deriv;
+
+	mutable Layers_t
+		neurons_matx,
+		cache_matx;
+	Layers_t errors;
+	Weights_t weights;
 
 
 };
@@ -246,15 +276,15 @@ protected:
 //
 //		if constexpr (i == layers - 1) {
 //			this->neurons_matx[i] = std::make_unique<VecR>(l);
-//			this->cache_neurons[i] = std::make_unique<VecR>(l);
-//			this->deltas[i] = std::make_unique<VecR>(l);
+//			this->cache_matx[i] = std::make_unique<VecR>(l);
+//			this->errors[i] = std::make_unique<VecR>(l);
 //		} else {
 //			this->neurons_matx[i] = std::make_unique<VecR>(l + 1);
-//			this->cache_neurons[i] = std::make_unique<VecR>(l + 1);
-//			this->deltas[i] = std::make_unique<VecR>(l + 1);
+//			this->cache_matx[i] = std::make_unique<VecR>(l + 1);
+//			this->errors[i] = std::make_unique<VecR>(l + 1);
 //
 //			this->neurons_matx[i]->coeffRef(l) = 1.0;
-//			this->cache_neurons[i]->coeffRef(l) = 1.0;
+//			this->cache_matx[i]->coeffRef(l) = 1.0;
 //		}
 //
 //		if constexpr (i > 0) {
@@ -277,7 +307,7 @@ protected:
 //	}
 //
 //	mutable Layers_t neurons_matx;
-//	Layers_t cache_neurons, deltas;
+//	Layers_t cache_matx, errors;
 //	Weights_t weights;
 //	Scalar_t learning_rate;
 //
