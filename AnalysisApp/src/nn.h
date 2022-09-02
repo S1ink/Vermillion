@@ -50,15 +50,16 @@ inline static scalar reg_L2_d(scalar w) { return w; }
 
 
 enum ActivationFunc {
-	SIGMOID,
-	TANH,
+	LINEAR = 0,
 	RELU,
-	LINEAR
+	SIGMOID,
+	TANH
 };
 enum Regularization{
-	NONE,
+	NONE = 0,
 	L1,
-	L2
+	L2,
+	DROPOUT		// not implemented
 };
 
 template<typename scalar>
@@ -95,6 +96,24 @@ inline static std::function<scalar(scalar)> getFuncDeriv(ActivationFunc f) {
 		case TANH: return hyperbolictan_d<scalar>;
 		case RELU: return relu_d<scalar>;
 		case LINEAR: return linear<scalar>;
+	}
+}
+template<typename scalar>
+inline static std::function<scalar(scalar)> getRegFunc(Regularization f) {
+	switch (f) {
+	case NONE: return nullptr;
+	case L1: return reg_L1<scalar>;
+	case L2: return reg_L2<scalar>;
+	case DROPOUT: return nullptr;
+	}
+}
+template<typename scalar>
+inline static std::function<scalar(scalar)> getRegFuncDeriv(Regularization f) {
+	switch (f) {
+	case NONE: return nullptr;
+	case L1: return reg_L1<scalar>;
+	case L2: return reg_L2<scalar>;
+	case DROPOUT: return nullptr;
 	}
 }
 
@@ -150,18 +169,24 @@ public:
 
 	NeuralNetwork(
 		const std::vector<size_t>& topo,
-		Scalar_t learning_rate = 0.005,
-		ActivationFunc func = ActivationFunc::SIGMOID
+		float learning_rate = 0.005,
+		ActivationFunc func = ActivationFunc::SIGMOID,
+		Regularization reg = Regularization::NONE,
+		float reg_rate = 0.003
 	);
 	NeuralNetwork(
 		std::vector<size_t>&& topo,
-		Scalar_t learning_rate = 0.005,
-		ActivationFunc func = ActivationFunc::SIGMOID
+		float learning_rate = 0.005,
+		ActivationFunc func = ActivationFunc::SIGMOID,
+		Regularization reg = Regularization::NONE,
+		float reg_rate = 0.003
 	);
 	NeuralNetwork(
 		Weights_t&& weights,
-		Scalar_t learning_rate = 0.005,
-		ActivationFunc func = ActivationFunc::SIGMOID
+		float learning_rate = 0.005,
+		ActivationFunc func = ActivationFunc::SIGMOID,
+		Regularization reg = Regularization::NONE,
+		float reg_rate = 0.003
 	);
 
 	void regenerate();
@@ -188,11 +213,14 @@ public:
 	void export_weights(std::ostream& out);
 	static void parse_weights(std::istream& in, Weights_t& weights);
 
-	void setActivationFunc(ActivationFunc f);
-	inline void setLearningRate(Scalar_t lr) { this->learning_rate = lr; }
-	inline const Scalar_t& getLearningRate() const { return this->learning_rate; }
-	inline size_t inputs() const { return this->topology.front(); }
-	inline size_t outputs() const { return this->topology.back(); }
+	void setActivationFunc(ActivationFunc);
+	void setRegularization(Regularization);
+	inline void setLearningRate(float lr) { this->learning_rate = lr; }
+	inline void setRegularizationRate(float r) { this->reg_rate = r; }
+	inline const float getLearningRate() const { return this->learning_rate; }
+	inline const float getRegularizationRate() const { return this->reg_rate; }
+	inline const size_t inputs() const { return this->topology.front(); }
+	inline const size_t outputs() const { return this->topology.back(); }
 	//size_t computeTotalSize() const;
 	size_t computeHorizontalUnits() const;
 	//size_t computeVerticalUnits() const;
@@ -212,10 +240,13 @@ public:
 
 protected:
 	std::vector<size_t> topology;
-	Scalar_t learning_rate;
+	float learning_rate, reg_rate;
 	std::function<Scalar_t(Scalar_t)>
 		activation_func,
-		activation_func_deriv;
+		activation_func_deriv,
+		regularization_func,
+		regularization_func_deriv;
+	Regularization reg_f;
 
 	mutable Layers_t
 		neurons_matx,

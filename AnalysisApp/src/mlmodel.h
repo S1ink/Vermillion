@@ -31,6 +31,9 @@ public:
 protected:
 	static void trainThread(MlTool*);
 
+	size_t computeViewWidth() const;
+	inline size_t computeViewHeight() const { return *std::max_element(this->topology.begin(), this->topology.end()); }
+
 private:
 	std::vector<float> epochs_avg, epochs_high, epochs_low, epoch_last;
 	std::vector<size_t> topo_edit{this->topology};
@@ -39,9 +42,10 @@ private:
 	std::thread trainer;
 	std::mutex train_mutex;
 	
-	ImPlotColormap primary_theme{ImPlotColormap_Cool}, secondary_theme{ImPlotColormap_Hot};
+	ImPlotColormap primary_theme{ImPlotColormap_Cool}, secondary_theme{ImPlotColormap_Plasma};
 	int
-		activ_f_idx{ 0 },
+		activ_f_idx{ ActivationFunc::SIGMOID },
+		reg_f_idx{ Regularization::NONE },
 		section_idx{ 0 },
 		layers_drag{(int)this->topology.size()},
 		data_size{10},
@@ -61,9 +65,13 @@ private:
 		s_training_loop{ false }
 	;
 
-	inline static constexpr char* func_names[]{
-		"Sigmoid", "Hyperbolic Tangent", "ReLU"
-	};
+	inline static constexpr char
+		*func_names[]{
+			"ReLU",	"Linear", "Sigmoid", "Hyperbolic Tangent"
+		},
+		*regl_names[]{
+			"None", "L1", "L2", "Dropout(NOT IMPLEMENTED)"
+		};
 
 
 };

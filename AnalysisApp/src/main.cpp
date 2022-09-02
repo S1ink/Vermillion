@@ -23,7 +23,7 @@ void tmain(int argc, char** argv) {
 
 Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
 
-	std::thread(tmain, argc, argv).detach();
+	//std::thread(tmain, argc, argv).detach();
 
 	const Walnut::ApplicationSpecification window{ "Vermillion [ALPHA]", 1280, 720 };
 

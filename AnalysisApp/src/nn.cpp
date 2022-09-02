@@ -23,6 +23,8 @@ void NeuralNetwork::regenerate() {
 			std::make_unique<VecR>(this->neurons_matx.back()->size())	);	// changed from 'neurons_matx.size()'
 		this->errors.emplace_back(			// ^^^
 			std::make_unique<VecR>(this->neurons_matx.back()->size())	);	// '''
+		this->cache_matx.back()->setZero();
+		this->errors.back()->setZero();
 		// topo{2, 3, 1} -> cache/delta{1, 2, 3} [x] -> cache/delta{3, 4, 1}
 
 		if (i != this->topology.size() - 1) {	// not last idx
@@ -122,6 +124,8 @@ void NeuralNetwork::regenerate(Weights_t&& weights) {
 				std::make_unique<VecR>(this->neurons_matx.back()->size())	);
 			this->errors.emplace_back(
 				std::make_unique<VecR>(this->neurons_matx.back()->size())	);
+			this->cache_matx.back()->setZero();
+			this->errors.back()->setZero();
 
 			if (i != this->topology.size() - 1) {
 				this->neurons_matx.back()->coeffRef(this->topology.at(i)) = 1.0;
@@ -149,20 +153,24 @@ void NeuralNetwork::remix() {
 
 
 NeuralNetwork::NeuralNetwork(
-	const std::vector<size_t>& topo, Scalar_t lr, ActivationFunc f
-) : NeuralNetwork(std::move(std::vector<size_t>(topo)), lr, f) {}
+	const std::vector<size_t>& topo, float lr, ActivationFunc f, Regularization r, float rr
+) : NeuralNetwork(std::move(std::vector<size_t>(topo)), lr, f, r, rr) {}
 NeuralNetwork::NeuralNetwork(
-	std::vector<size_t>&& topo, Scalar_t lr, ActivationFunc f
+	std::vector<size_t>&& topo, float lr, ActivationFunc f, Regularization r, float rr
 ) : 
-	topology(std::move(topo)), learning_rate(lr), activation_func(getFunc<Scalar_t>(f)), activation_func_deriv(getFuncDeriv<Scalar_t>(f))
+	topology(std::move(topo)), learning_rate(lr), reg_rate(rr)
 {
+	this->setActivationFunc(f);
+	this->setRegularization(r);
 	this->regenerate();
 }
 NeuralNetwork::NeuralNetwork(
-	Weights_t&& weights, Scalar_t lr, ActivationFunc f
+	Weights_t&& weights, float lr, ActivationFunc f, Regularization r, float rr
 ) :
-	learning_rate(lr), activation_func(getFunc<Scalar_t>(f)), activation_func_deriv(getFuncDeriv<Scalar_t>(f))
+	learning_rate(lr), reg_rate(rr)
 {
+	this->setActivationFunc(f);
+	this->setRegularization(r);
 	this->regenerate(std::move(weights));
 }
 
@@ -191,6 +199,7 @@ void NeuralNetwork::calcErrors(const VecR& output) {
 		(*this->errors[i]) =
 			((*this->errors[i + 1]) * (this->weights[i]->transpose())).array() *
 			this->cache_matx[i]->unaryExpr(this->activation_func_deriv).array();	// store error for each layer by working backwards
+		this->errors[i]->coeffRef(this->errors[i]->size() - 1) = 0;
 		if (!this->errors[i]->allFinite()) {
 			std::cout << "CalcErrors failure: NaN detected. Aborting." << std::endl;
 			this->dump(std::cout);
@@ -199,40 +208,60 @@ void NeuralNetwork::calcErrors(const VecR& output) {
 	}
 }
 void NeuralNetwork::updateWeights() {
-	for (size_t i = 0; i < this->topology.size() - 1; i++) {
-//		if (i != this->topology.size() - 2) {
-			for (size_t c = 0; c < this->weights[i]->cols() - (i != this->topology.size() - 2); c++) {	// skip last col exept on last matx
-				for (size_t r = 0; r < this->weights[i]->rows() - 1; r++) {	// skip last row on last matx
-					this->weights[i]->coeffRef(r, c) +=
-						this->learning_rate *
-						this->errors[i + 1]->coeff(c) *
-						//this->activation_func_deriv(this->cache_matx[i + 1]->coeffRef(c)) *
-						this->neurons_matx[i]->coeff(r);	// for biases delete this part, just add lr * err
-						// also subtract regularization value
-				}
-				if (i != this->topology.size() - 2) {
-					this->weights[i]->coeffRef(this->weights[i]->rows() - 1, c) +=
-						this->learning_rate * this->errors[i + 1]->coeff(c);
-				}
-			}
-			if (!this->weights[i]->allFinite()) {
-				std::cout << "UpdateWeights failure: NaN detected. Aborting." << std::endl;
-				this->dump(std::cout);
-				abort();
-			}
-//		}
-		//else {
-		//	for (size_t c = 0; c < this->weights[i]->cols(); c++) {
-		//		for (size_t r = 0; r < this->weights[i]->rows(); r++) {
-		//			this->weights[i]->coeffRef(r, c) +=
-		//				this->learning_rate *
-		//				this->errors[i + 1]->coeff(c) *
-		//				//this->activation_func_deriv(this->cache_matx[i + 1]->coeffRef(c)) *
-		//				this->neurons_matx[i]->coeff(r);
-		//		}
-		//	}
-		//}
+	size_t i = 0;
+	for (; i < this->topology.size() - 1; i++) {
+		if (this->reg_f == L2) {
+			this->weights[i]->
+				block(0, 0, this->weights[i]->rows() - 1, this->weights[i]->cols() - 1)
+				*= (1.f - this->reg_rate * this->learning_rate);
+		}
+		else if (this->regularization_func_deriv) {
+			this->weights[i]->
+				block(0, 0, this->weights[i]->rows() - 1, this->weights[i]->cols() - 1)
+				-= (this->weights[i]->
+					block(0, 0, this->weights[i]->rows() - 1, this->weights[i]->cols() - 1).unaryExpr(
+						this->regularization_func_deriv
+					) * this->reg_rate * this->learning_rate);
+		}
+		*this->weights[i] += (
+			this->learning_rate * (this->neurons_matx[i]->transpose() * *this->errors[i + 1])
+		);
+		if (!this->weights[i]->allFinite()) {
+			std::cout << "UpdateWeights failure: NaN detected. Aborting." << std::endl;
+			this->dump(std::cout);
+			abort();
+		}
 	}
+	this->weights[i - 1]->row(this->weights[i - 1]->rows() - 1).setZero();
+
+////		if (i != this->topology.size() - 2) {
+//			for (size_t c = 0; c < this->weights[i]->cols() - (i != this->topology.size() - 2); c++) {	// skip last col exept on last matx
+//				for (size_t r = 0; r < this->weights[i]->rows() - 1; r++) {	// skip last row on last matx
+//					this->weights[i]->coeffRef(r, c) +=
+//						this->learning_rate *
+//						this->errors[i + 1]->coeff(c) *
+//						//this->activation_func_deriv(this->cache_matx[i + 1]->coeffRef(c)) *
+//						this->neurons_matx[i]->coeff(r);	// for biases delete this part, just add lr * err
+//						// also subtract regularization value
+//				}
+//				if (i != this->topology.size() - 2) {
+//					this->weights[i]->coeffRef(this->weights[i]->rows() - 1, c) +=
+//						this->learning_rate * this->errors[i + 1]->coeff(c);
+//				}
+//			}
+//			
+////		}
+//		//else {
+//		//	for (size_t c = 0; c < this->weights[i]->cols(); c++) {
+//		//		for (size_t r = 0; r < this->weights[i]->rows(); r++) {
+//		//			this->weights[i]->coeffRef(r, c) +=
+//		//				this->learning_rate *
+//		//				this->errors[i + 1]->coeff(c) *
+//		//				//this->activation_func_deriv(this->cache_matx[i + 1]->coeffRef(c)) *
+//		//				this->neurons_matx[i]->coeff(r);
+//		//		}
+//		//	}
+//		//}
 }
 void NeuralNetwork::train(const IOList& data_in, const IOList& data_out) {
 	for (size_t i = 0; i < data_in.size(); i++) {
@@ -333,6 +362,11 @@ void NeuralNetwork::parse_weights(std::istream& in, Weights_t& weights) {
 void NeuralNetwork::setActivationFunc(ActivationFunc f) {
 	this->activation_func = getFunc<Scalar_t>(f);
 	this->activation_func_deriv = getFuncDeriv<Scalar_t>(f);
+}
+void NeuralNetwork::setRegularization(Regularization f) {
+	this->reg_f = f;
+	this->regularization_func = getRegFunc<Scalar_t>(f);
+	this->regularization_func_deriv = getRegFuncDeriv<Scalar_t>(f);
 }
 //size_t NeuralNetwork::computeTotalSize() const {
 //	size_t ret{ 0 };

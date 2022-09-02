@@ -94,7 +94,6 @@ void MlTool::OnUIRender() {
 				switch (this->section_idx) {
 				case 0: {
 /* NETWORK OPTIONS*/
-					ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 8, 25 });
 					if (ImGui::Button("Load Model")) {
 						std::string f;
 						if (openFile(f)) {
@@ -115,6 +114,7 @@ void MlTool::OnUIRender() {
 							o.close();
 						}
 					}
+					ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 8, 25 });
 					if (ImGui::Button("Dump Network")) {
 						this->dump(std::cout);
 					}
@@ -134,12 +134,24 @@ void MlTool::OnUIRender() {
 					ImGui::AlignTextToFramePadding();
 					ImGui::BulletText("Activation:"); ImGui::SameLine();
 					ImGui::SetNextItemWidth(180);
-					if (ImGui::Combo("##a_func_combo", &activ_f_idx, func_names, 3)) { this->setActivationFunc((ActivationFunc)this->activ_f_idx); }
+					if (ImGui::Combo("##a_func_combo", &activ_f_idx, func_names, 4)) { this->setActivationFunc((ActivationFunc)this->activ_f_idx); }
 					
 					ImGui::AlignTextToFramePadding();
 					ImGui::BulletText("Learning Rate:"); ImGui::SameLine();
 					ImGui::SetNextItemWidth(60);
 					ImGui::DragFloat("##lr_drag", &this->learning_rate, 0.0001f, 0.f, 1.f, "%.3f");
+
+					ImGui::AlignTextToFramePadding();
+					ImGui::BulletText("Regularization Strategy:"); ImGui::SameLine();
+					ImGui::SetNextItemWidth(200);
+					if (ImGui::Combo("##reg_func_combo", &reg_f_idx, regl_names, 4)) { this->setRegularization((Regularization)this->reg_f_idx); }
+					
+					if (this->reg_f_idx == Regularization::NONE) { ImGui::BeginDisabled(); }
+					ImGui::AlignTextToFramePadding();
+					ImGui::BulletText("Regularization Rate:"); ImGui::SameLine();
+					ImGui::SetNextItemWidth(60);
+					ImGui::DragFloat("##rr_drag", &this->reg_rate, 0.0001f, 0.f, 1.f, "%.3f");
+					if (this->reg_f_idx == Regularization::NONE) { ImGui::EndDisabled(); }
 
 					ImGui::AlignTextToFramePadding();
 					ImGui::BulletText("Layers:"); ImGui::SameLine();
@@ -232,15 +244,101 @@ void MlTool::OnUIRender() {
 
 			// viewing windows
 
+			static ImVec2 sz;
+// NETWORK PLOTS
 			if (this->s_show_network) {
-				if (ImGui::Begin("Network Matrix", &this->s_show_network, ImGuiWindowFlags_AlwaysAutoResize)) {
-					
+				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
+				if (ImGui::Begin("Network Matrix", &this->s_show_network/*, ImGuiWindowFlags_AlwaysAutoResize*/)) {
 					ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, { 0, 0 });
-					static int x, y;
-					static float unit_sz{ 50.f };
-					if (ImGui::IsWindowFocused() && ImGui::IsWindowHovered()) {
-						unit_sz += ImGui::GetIO().MouseWheel;
+					static int r, c;
+					static float unit_sz{ 50.f }, layer_spacing{ 2.f }, start_x, start_y, val, clamp, x, y;
+					static float line_x[25], line_y[25];
+					static bool net_matx_view{ false };	// true for net, false for matx
+					sz = ImGui::GetContentRegionAvail();
+					sz.y -= (ImGui::GetStyle().ItemSpacing.y * 2 - ImGui::GetItemRectSize().y);
+					x = (net_matx_view ? (this->topology.size() * (1 + layer_spacing) - layer_spacing) : (this->computeViewWidth() + (0.1 * this->weights.size()))) + 2;
+					y = this->computeViewHeight() + 2 + !net_matx_view;
+					sz.y = sz.x * y / x;
+					ImGui::Spacing(); ImGui::Spacing(); ImGui::SameLine();	// account for no padding
+					if (ImGui::Button(net_matx_view ? "Show Matrix View" : "Show Connection View")) { net_matx_view = !net_matx_view; }
+					if (ImPlot::BeginPlot("##network", sz, ImPlotFlags_NoMouseText | ImPlotFlags_Equal)) {
+						ImPlot::SetupAxes(NULL, NULL, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
+						ImPlot::SetupAxesLimits(0, x, 0, y);
+						ImPlot::SetupAxisLimitsConstraints(ImAxis_X1, 0, x);
+						ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, y);
+						if (net_matx_view) {
+							for (size_t i = 0; i < this->topology.size(); i++) {
+								r = this->topology[i];
+								c = 1;
+								start_x = (i * (layer_spacing + 1)) + 1;
+								start_y = ((y - 2 - r) / 2.f) + 1;
+								if (i != this->topology.size() - 1) {
+									ImPlot::PushColormap(this->primary_theme);
+									line_x[0] = start_x + 0.5;
+									line_x[24] = start_x + layer_spacing + 1.5;
+									for (size_t rw = 0; rw < this->weights[i]->rows() - 1; rw++) {
+										line_y[0] = start_y + (this->topology[i] - rw) - 0.5;
+										for (size_t cw = 0; cw < this->weights[i]->cols() - (i != this->topology.size() - 2); cw++) {
+											ImGui::PushID((i & 0xff) | ((cw & 0xff) << 8) | ((rw & 0xff) << 16));
+											val = this->weights[i]->coeff(rw, cw);
+											clamp = (val > 5.f ? 5.f : (val < -5.f ? -5.f : val));
+											ImVec4 color = ImPlot::SampleColormap(clamp / 10.f + 0.5f);
+											ImPlot::SetNextLineStyle(
+												color,
+												fabs(clamp) * 2.f
+											);
+											line_y[24] =  0.5 * (y + this->topology[i + 1] - 1) - cw;
+											for (size_t k = 1; k < 24; k++) {
+												float
+													t = k / 24.f,
+													u = 1 - t,
+													w1 = u * u * u,
+													w2 = 3 * u * u * t,
+													w3 = 3 * u * t * t,
+													w4 = t * t * t;
+												line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.5f) + w3 * (line_x[24] - 1.5f) + w4 * (line_x[24]);
+												line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[24] + w4 * line_y[24];
+											}
+											ImPlot::PlotLine("##wl", line_x, line_y, 25);
+											ImGui::PopID();
+										}
+									}
+									ImPlot::PopColormap();
+								}
+								ImGui::PushID((i & 0xff) | ((c & 0xff) << 8) | ((r & 0xff) << 16));
+								ImPlot::PushColormap(this->secondary_theme);
+								ImPlot::PlotHeatmap("##nl", this->neurons_matx[i]->data(), r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
+								ImPlot::PopColormap();
+								ImGui::PopID();
+							}
+						} else {
+							start_x = 1;	// set to padding size
+							for (size_t i = 0; i < this->topology.size(); i++) {
+								r = this->neurons_matx[i]->cols();
+								c = 1;
+								start_y = ((y - 2 - r) / 2.f) + 1;
+								ImGui::PushID((i & 0xff) | ((c & 0xff) << 8) | ((r & 0xff) << 16));
+								ImPlot::PushColormap(this->secondary_theme);
+								ImPlot::PlotHeatmap("##nl", this->neurons_matx[i]->data(), r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
+								ImPlot::PopColormap();
+								ImGui::PopID();
+								if (i != this->topology.size() - 1) {
+									r = this->weights[i]->rows();
+									c = this->weights[i]->cols();
+									start_x += 1.05;
+									start_y = ((y - 2 - r) / 2.f) + 1;
+									ImGui::PushID((i & 0xff) | ((c & 0xff) << 8) | ((r & 0xff) << 16));
+									ImPlot::PushColormap(this->primary_theme);
+									ImPlot::PlotHeatmap("##nw", this->weights[i]->data(), r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
+									ImPlot::PopColormap();
+									ImGui::PopID();
+									start_x += (c + 0.05);
+								}
+							}
+						}
+						ImPlot::EndPlot();
 					}
+#ifdef LOL
 					for (int i = 0; i < this->weights.size() + this->topology.size(); i++) {
 						if (i % 2) {	// weight
 							x = this->weights[i / 2]->cols();
@@ -278,21 +376,24 @@ void MlTool::OnUIRender() {
 						ImGui::PopID();
 						ImGui::SameLine();
 					}
+#endif
+
 					ImPlot::PopStyleVar();
 				} ImGui::End();
+				ImGui::PopStyleVar();
 			}
+// GRAPH PLOTS
 			if (this->s_show_graphs) {
 				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
 				if (ImGui::Begin("Training Progress", &this->s_show_graphs)) {
-					static ImVec2 sz;
-					sz = ImGui::GetContentRegionAvail();
 					static ImPlotScale scale_x{ ImPlotScale_Log10 }, scale_y{ ImPlotScale_Log10 };
+					sz = ImGui::GetContentRegionAvail();
 					ImGui::Spacing();
 					ImGui::Spacing(); ImGui::SameLine();
 					ImGui::CheckboxFlags("X-Axis Log10 Scale", &scale_x, ImPlotScale_Log10);
 					ImGui::SameLine();
 					ImGui::CheckboxFlags("Y-Axis Log10 Scale", &scale_y, ImPlotScale_Log10);
-					if (ImPlot::BeginSubplots("Training Progress", 1, 2, {sz.x, sz.y - ImGui::GetTextLineHeightWithSpacing()})) {
+					if (ImPlot::BeginSubplots("Training Progress", 1, 2, {sz.x, sz.y - ImGui::GetStyle().ItemSpacing.y * 2 - ImGui::GetItemRectSize().y})) {
 						if (ImPlot::BeginPlot("H/L/Avg MSE per Epoch", {-1, 0}, ImPlotFlags_Crosshairs)) {
 							ImPlot::SetupAxes("Epoch", "MSE", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
 							ImPlot::SetupAxisScale(ImAxis_X1, scale_x);
@@ -381,4 +482,12 @@ void MlTool::trainThread(MlTool* t) {
 		}
 	}
 	t->s_training_thread = false;
+}
+
+size_t MlTool::computeViewWidth() const {
+	size_t ret = this->topology.size();
+	for (size_t i = 0; i < this->topology.size() - 1; i++) {
+		ret += this->weights[i]->cols();
+	}
+	return ret;
 }
