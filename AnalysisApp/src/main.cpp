@@ -12,12 +12,7 @@
 
 
 void tmain(int argc, char** argv) {
-	std::cout << tanhf(INFINITY) << std::endl;
-	std::cout << tanhf(-INFINITY) << std::endl;
-	std::cout << sigmoid(INFINITY) << std::endl;
-	std::cout << sigmoid(-INFINITY) << std::endl;
-	std::cout << relu(INFINITY) << std::endl;
-	std::cout << relu(-INFINITY) << std::endl;
+	std::cout << _fdsign(-3.f) << std::endl;
 }
 
 

@@ -10,6 +10,14 @@
 
 inline ImVec2 operator-(ImVec2 a, ImVec2 b) { return { a.x - b.x, a.y - b.y }; }
 
+template <typename num_t>
+inline int sgn(num_t val) { return (num_t(0) < val) - (val < num_t(0)); }
+
+template<typename num_t>
+inline num_t dist(num_t x1, num_t y1, num_t x2, num_t y2) {
+	return sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
+}
+
 
 void MlTool::OnUIRender() {
 	if (this->s_tool_enable) {
@@ -249,24 +257,49 @@ void MlTool::OnUIRender() {
 			if (this->s_show_network) {
 				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
 				if (ImGui::Begin("Network Matrix", &this->s_show_network/*, ImGuiWindowFlags_AlwaysAutoResize*/)) {
-					ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, { 0, 0 });
-					static int r, c;
-					static float unit_sz{ 50.f }, layer_spacing{ 2.f }, start_x, start_y, val, clamp, x, y;
-					static float line_x[25], line_y[25];
-					static bool net_matx_view{ false };	// true for net, false for matx
+
+					constexpr static float unit_sz{ 50.f }, layer_spacing{ 2.f };
+					constexpr static int pt_len{ 100 };
+					static float line_x[pt_len], line_y[pt_len], start_x, start_y, val, clamp, x, y;
+					static int r, c, layer_display{ 0 };
+					static bool
+						net_matx_view{ false },	// true for net, false for matx
+						net_show_biases{ false },
+						animate{ false };
+
 					sz = ImGui::GetContentRegionAvail();
 					sz.y -= (ImGui::GetStyle().ItemSpacing.y * 2 - ImGui::GetItemRectSize().y);
 					x = (net_matx_view ? (this->topology.size() * (1 + layer_spacing) - layer_spacing) : (this->computeViewWidth() + (0.1 * this->weights.size()))) + 2;
 					y = this->computeViewHeight() + 2 + !net_matx_view;
 					sz.y = sz.x * y / x;
+
 					ImGui::Spacing(); ImGui::Spacing(); ImGui::SameLine();	// account for no padding
 					if (ImGui::Button(net_matx_view ? "Show Matrix View" : "Show Connection View")) { net_matx_view = !net_matx_view; }
+					if (net_matx_view) {
+						ImGui::SameLine(0, 32);
+						if (ImGui::Button(net_show_biases ? "Show Neuron Values" : "Show Biases")) { net_show_biases = !net_show_biases; }
+						ImGui::SameLine();
+						ImGui::Checkbox("Animate", &animate);
+					} else {
+						ImGui::SameLine(0, 32);
+						ImGui::AlignTextToFramePadding();
+						ImGui::Text("Layer Display:");
+						ImGui::SameLine();
+						ImGui::SetNextItemWidth(150);
+						ImGui::Combo("##ldselect", &layer_display, "Neuron Values\0Cache Values\0Deltas");
+					}
+		// PLOT BLOCK
+					ImPlot::PushStyleVar(ImPlotStyleVar_PlotPadding, { 0, 0 });
 					if (ImPlot::BeginPlot("##network", sz, ImPlotFlags_NoMouseText | ImPlotFlags_Equal)) {
 						ImPlot::SetupAxes(NULL, NULL, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
 						ImPlot::SetupAxesLimits(0, x, 0, y);
 						ImPlot::SetupAxisLimitsConstraints(ImAxis_X1, 0, x);
 						ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, y);
+						Scalar_t* dtbeg;
 						if (net_matx_view) {
+							static int offset_b, offset;
+							offset_b = (offset_b + 1) % (int)(ImGui::GetIO().Framerate * 4 / 3);
+							offset = (offset_b / (int)(round(ImGui::GetIO().Framerate) / 3) % 4);
 							for (size_t i = 0; i < this->topology.size(); i++) {
 								r = this->topology[i];
 								c = 1;
@@ -275,7 +308,7 @@ void MlTool::OnUIRender() {
 								if (i != this->topology.size() - 1) {
 									ImPlot::PushColormap(this->primary_theme);
 									line_x[0] = start_x + 0.5;
-									line_x[24] = start_x + layer_spacing + 1.5;
+									line_x[pt_len - 1] = start_x + layer_spacing + 1.5;
 									for (size_t rw = 0; rw < this->weights[i]->rows() - 1; rw++) {
 										line_y[0] = start_y + (this->topology[i] - rw) - 0.5;
 										for (size_t cw = 0; cw < this->weights[i]->cols() - (i != this->topology.size() - 2); cw++) {
@@ -287,27 +320,48 @@ void MlTool::OnUIRender() {
 												color,
 												fabs(clamp) * 2.f
 											);
-											line_y[24] =  0.5 * (y + this->topology[i + 1] - 1) - cw;
-											for (size_t k = 1; k < 24; k++) {
-												float
-													t = k / 24.f,
-													u = 1 - t,
-													w1 = u * u * u,
-													w2 = 3 * u * u * t,
-													w3 = 3 * u * t * t,
-													w4 = t * t * t;
-												line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.5f) + w3 * (line_x[24] - 1.5f) + w4 * (line_x[24]);
-												line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[24] + w4 * line_y[24];
+											//ImPlot::GetPlotSize();	// ^^^
+											line_y[pt_len - 1] =  0.5 * (y + this->topology[i + 1] - 1) - cw;
+											float d = dist(line_x[0], line_y[0], line_x[pt_len - 1], line_y[pt_len - 1]);
+											for (int k = 1; k < pt_len - 1; k++) {
+												static float t, u, w1, w2, w3, w4;
+												if (animate) {
+													if (!((k - offset) % 4)) {	// rel == 0;
+														line_x[k] = NAN;
+														line_y[k] = NAN;
+														continue;
+													} else {
+														//t = k / (float)(pt_len - 1);
+														t = (k / 4) * (4.f / pt_len);
+														t += (
+															(offset / (float)pt_len) +	// min												// half
+															sgn(k % 4 - offset) * ((0.1 * 4 / pt_len) + ((abs(k % 4 - offset) - 1) * (0.4 * 4 / pt_len)))
+														);
+													}
+												} else {
+													t = k / (float)(pt_len - 1);	// equal increments
+												}
+												u = 1 - t;
+												w1 = u * u * u;
+												w2 = 3 * u * u * t;
+												w3 = 3 * u * t * t;
+												w4 = t * t * t;
+												line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.5f) + w3 * (line_x[pt_len - 1] - 1.5f) + w4 * (line_x[pt_len - 1]);
+												line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[pt_len - 1] + w4 * line_y[pt_len - 1];
+
+												//if (animate && !((k - (this->epochs / 100 % 4)) % 4)) {}
 											}
-											ImPlot::PlotLine("##wl", line_x, line_y, 25);
+											ImPlot::PlotLine("##wl", line_x, line_y, pt_len);
 											ImGui::PopID();
 										}
 									}
 									ImPlot::PopColormap();
 								}
+								dtbeg = (net_show_biases && i > 0 && i != this->topology.size() - 1) ?
+									(this->weights[i - 1]->row(this->topology[i - 1]).data()) : this->neurons_matx[i]->data();
 								ImGui::PushID((i & 0xff) | ((c & 0xff) << 8) | ((r & 0xff) << 16));
 								ImPlot::PushColormap(this->secondary_theme);
-								ImPlot::PlotHeatmap("##nl", this->neurons_matx[i]->data(), r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
+								ImPlot::PlotHeatmap("##nl", dtbeg, r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
 								ImPlot::PopColormap();
 								ImGui::PopID();
 							}
@@ -317,9 +371,14 @@ void MlTool::OnUIRender() {
 								r = this->neurons_matx[i]->cols();
 								c = 1;
 								start_y = ((y - 2 - r) / 2.f) + 1;
+								switch (layer_display) {
+									case 0: dtbeg = this->neurons_matx[i]->data(); break;
+									case 1: dtbeg = this->cache_matx[i]->data(); break;
+									case 2: dtbeg = this->errors[i]->data(); break;
+								}
 								ImGui::PushID((i & 0xff) | ((c & 0xff) << 8) | ((r & 0xff) << 16));
 								ImPlot::PushColormap(this->secondary_theme);
-								ImPlot::PlotHeatmap("##nl", this->neurons_matx[i]->data(), r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
+								ImPlot::PlotHeatmap("##nl", dtbeg, r, c, -1, 1, "%.1f", { start_x, start_y }, { start_x + c, start_y + r });
 								ImPlot::PopColormap();
 								ImGui::PopID();
 								if (i != this->topology.size() - 1) {
@@ -377,7 +436,6 @@ void MlTool::OnUIRender() {
 						ImGui::SameLine();
 					}
 #endif
-
 					ImPlot::PopStyleVar();
 				} ImGui::End();
 				ImGui::PopStyleVar();
