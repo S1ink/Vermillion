@@ -105,6 +105,7 @@ inline static std::function<scalar(scalar)> getRegFunc(Regularization f) {
 	case L1: return reg_L1<scalar>;
 	case L2: return reg_L2<scalar>;
 	case DROPOUT: return nullptr;
+	default: return nullptr;
 	}
 }
 template<typename scalar>
@@ -114,6 +115,7 @@ inline static std::function<scalar(scalar)> getRegFuncDeriv(Regularization f) {
 	case L1: return reg_L1<scalar>;
 	case L2: return reg_L2<scalar>;
 	case DROPOUT: return nullptr;
+	default: return nullptr;
 	}
 }
 
@@ -226,14 +228,19 @@ public:
 	//size_t computeVerticalUnits() const;
 
 	inline bool compatibleFunc(const IOFunc& f) const { return this->inputs() == f.inputs() && this->outputs() == f.outputs(); }
-	inline bool compatibleDataSet(const DataSet& d) const { return this->inputs() == d.first.size() && this->outputs() == d.second.size(); }
+	inline bool compatibleDataSet(const DataSet& d) const {
+		return (d.first.size() > 0 && this->inputs() == d.first[0]->size()) &&
+			(d.second.size() > 0 && this->outputs() == d.second[0]->size());
+	}
 
 	inline void genFunc(IOFunc& f) const { f.gen(this->inputs(), this->outputs()); }
 	void genFuncData(DataSet& d, size_t s, IOFunc& f = IOFunc{}) const;
 	void genData(DataSet& d, size_t s, const IOFunc& f) const;
 
-	static void exportData(DataSet& d, std::ostream& o);
+	static void exportData(DataSet& d, std::ostream& o);	// format is pseudo-CSV style, where inputs are separated from outputs by ':'
+	static void exportData_strictCSV(DataSet& d, std::ostream& oi, std::ostream& oo);	// export inputs to one file in csv, export outputs to another
 	static void importData(DataSet& d, std::istream& i);
+	static void importData_strictCSV(DataSet& d, std::istream& ii, std::istream& io);
 
 	void dump(std::ostream&);
 

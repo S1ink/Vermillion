@@ -437,7 +437,66 @@ void NeuralNetwork::exportData(DataSet& d, std::ostream& o) {
 	}
 	o.flush();
 }
+void NeuralNetwork::exportData_strictCSV(DataSet& d, std::ostream& oi, std::ostream& oo) {
+	for (size_t s = 0; s < d.first.size(); s++) {
+		VecR& ins = *d.first[s];
+		VecR& outs = *d.second[s];
+		for (size_t i = 0; i < ins.size(); i++) {
+			oi << ins[i];
+			oi << (i != ins.size() - 1 ? ", " : "\n");
+		}
+		oi.flush();
+		for (size_t i = 0; i < outs.size(); i++) {
+			oo << outs[i];
+			oo << (i != outs.size() - 1 ? ", " : "\n");
+		}
+		oo.flush();
+	}
+}
 void NeuralNetwork::importData(DataSet& d, std::istream& i) {
+	std::string sect;
+	std::vector<Scalar_t> buff;
+	size_t pos, split;
+	while (std::getline(i, sect, '\n')) {
+		buff.clear();
+		pos = split = 0;
+		std::istringstream stream(sect);
+		split = sect.find(':', 0);
+		if (split != std::string::npos) {
+			for (;;) {
+				buff.emplace_back();
+				stream >> buff.back();
+				pos = sect.find(',', stream.tellg());
+				if (stream.tellg() == (std::istringstream::pos_type)(-1)) {
+					d.second.emplace_back(std::make_unique<VecR>(
+						Eigen::Map<VecR>(buff.data(), buff.size())
+					));
+					break;
+				} else if (pos - stream.tellg() < 3) {
+					stream.ignore(2, ',');
+				} else if (pos > split && (split - stream.tellg()) < 3) {
+					d.first.emplace_back(std::make_unique<VecR>(
+						Eigen::Map<VecR>(buff.data(), buff.size())
+					));
+					buff.clear();
+					stream.ignore(2, ':');
+				} else {
+					// ???
+				}
+			}
+		} else {
+			// no separator
+		}
+		if (d.first.size() > 1 && d.first.back()->size() != d.first[d.first.size() - 2]->size()) {
+			// error
+		}
+		if (d.second.size() > 1 && d.second.back()->size() != d.second[d.second.size() - 2]->size()) {
+			// error
+		}
+		
+	}
+}
+void NeuralNetwork::importData_strictCSV(DataSet& d, std::istream& ii, std::istream& io) {
 
 }
 

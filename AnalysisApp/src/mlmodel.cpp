@@ -10,7 +10,7 @@
 
 inline ImVec2 operator-(ImVec2 a, ImVec2 b) { return { a.x - b.x, a.y - b.y }; }
 
-template <typename num_t>
+template<typename num_t>
 inline int sgn(num_t val) { return (num_t(0) < val) - (val < num_t(0)); }
 
 template<typename num_t>
@@ -26,6 +26,8 @@ void MlTool::OnUIRender() {
 			if (ImGui::Button(this->s_show_network ? "Close Network" : "View Network")) { this->s_show_network = !this->s_show_network; }
 			ImGui::SameLine(0, 4);
 			if (ImGui::Button(this->s_show_graphs ? "Close Training Progress" : "View Training Progress")) { this->s_show_graphs = !this->s_show_graphs; }
+			ImGui::SameLine(0, 4);
+			if (ImGui::Button(this->s_show_console ? "Close Log" : "Open Log")) { this->s_show_console = !this->s_show_console; }
 			ImGui::SameLine(0, 24);
 			ImPlot::ColormapButton("Primary Theme", ImVec2{}, this->primary_theme);
 			ImGui::SameLine(0, 4);
@@ -45,8 +47,12 @@ void MlTool::OnUIRender() {
 				ImGui::BeginGroup();
 				if (this->section_idx != 0) { ImGui::BeginDisabled(); }
 				{
-					//ImGui::TextColored({ 1, 0.6, 0, 1 }, "Network");
 					ImGui::Text("Network");
+					ImGui::Spacing(); ImGui::Spacing();
+					ImGui::Bullet(); ImGui::Text("Layers:  %d", this->topology.size());
+					ImGui::Spacing(); ImGui::Spacing();
+					ImGui::Bullet(); ImGui::Text("Inputs:  %d", this->inputs());
+					ImGui::Bullet(); ImGui::Text("Outputs:  %d", this->outputs());
 				}
 				if (this->section_idx != 0) { ImGui::EndDisabled(); }
 				ImGui::EndGroup();
@@ -60,8 +66,19 @@ void MlTool::OnUIRender() {
 				ImGui::BeginGroup();
 				if (this->section_idx != 1) { ImGui::BeginDisabled(); }
 				{
-					//ImGui::TextColored({ 1, 0.6, 0, 1 }, "DataSet");
+					static bool valid_set;
+					valid_set = this->dataset.first.size() > 0;
 					ImGui::Text("DataSet");
+					ImGui::Spacing(); ImGui::Spacing();
+					ImGui::AlignTextToFramePadding();
+					ImGui::Bullet(); ImGui::Text("Valid Set:"); ImGui::SameLine();
+					ImGui::BeginDisabled(); ImGui::Checkbox("##data_valid", &valid_set); ImGui::EndDisabled();
+					ImGui::Bullet();
+					ImGui::TextColored(
+						(this->compatibleDataSet(this->dataset) ? ImVec4{0, 1, 0, 1} : ImVec4{1, 0, 0, 1}),
+						"DataSet I/O: %d/%d", (valid_set ? this->dataset.first[0]->size() : 0), (valid_set ? this->dataset.second[0]->size() : 0)
+					);
+					ImGui::Bullet(); ImGui::Text("Sets: %d", this->dataset.first.size());
 				}
 				if (this->section_idx != 1) { ImGui::EndDisabled(); }		
 				ImGui::EndGroup();
@@ -75,19 +92,14 @@ void MlTool::OnUIRender() {
 				ImGui::BeginGroup();
 				if (this->section_idx != 2) { ImGui::BeginDisabled(); }
 				{
-					//ImGui::TextColored({ 1, 0.6, 0, 1 }, "Training");
 					ImGui::Text("Training");
-					ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 10, 10 });
-					ImGui::Spacing();
-					ImGui::PopStyleVar();
+					ImGui::Spacing(); ImGui::Spacing();
 					ImGui::Bullet(); ImGui::Text("Time per epoch:");
 					ImGui::Indent(); ImGui::Text("%.3f ms", this->epoch_ms); ImGui::Unindent();
 					ImGui::Bullet(); ImGui::Text("Epochs:");
 					ImGui::Indent(); ImGui::Text("%d", this->epochs); ImGui::Unindent();
 					ImGui::Bullet(); ImGui::Text("Current avg MSE:");
-					if (this->epochs_avg.size() > 0) {
-						ImGui::Indent(); ImGui::Text("%g", this->epochs_avg.back()); ImGui::Unindent();
-					}
+					ImGui::Indent(); ImGui::Text("%g", this->epochs_avg.size() > 0 ? this->epochs_avg.back() : 0); ImGui::Unindent();
 				}
 				if (this->section_idx != 2) { ImGui::EndDisabled(); }				
 				ImGui::EndGroup();
@@ -124,7 +136,8 @@ void MlTool::OnUIRender() {
 					}
 					ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 8, 25 });
 					if (ImGui::Button("Dump Network")) {
-						this->dump(std::cout);
+						this->dump(this->console_log);
+						this->s_show_console = true;
 					}
 					ImGui::PopStyleVar();
 
@@ -188,12 +201,14 @@ void MlTool::OnUIRender() {
 /*DATASET OPTIONS*/
 					// make inference
 					// gen dataset - export/load
+					ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 8, 25 });
 					if (ImGui::Button("Regenerate Function")) { this->genFunc(this->rfunc); }
-					ImGui::SameLine();
-					if (ImGui::Button("Output Function")) { this->rfunc.serializeFunc(std::cout); }
-					ImGui::SameLine();
-					if (ImGui::Button("View Structure")) { this->rfunc.serializeStructure(std::cout); }
-					if (ImGui::Button("Regenerate DataSet")) {
+					ImGui::SameLine(0, 32);
+					if (ImGui::Button("Output Function")) { this->rfunc.serializeFunc(this->console_log); this->s_show_console = true; }
+					ImGui::SameLine(0, 4);
+					if (ImGui::Button("View Structure")) { this->rfunc.serializeStructure(this->console_log); this->s_show_console = true; }
+					ImGui::PopStyleVar();
+					if (ImGui::Button("Regenerate Dataset")) {
 						if (!this->compatibleFunc(this->rfunc)) {
 							this->genFunc(this->rfunc);
 						}
@@ -204,15 +219,24 @@ void MlTool::OnUIRender() {
 					ImGui::SameLine();
 					ImGui::SetNextItemWidth(50);
 					ImGui::DragInt("##dataset_sz", &this->data_size, 1, 1, 1000);
-					if (ImGui::Button("Export DataSet") && this->dataset.first.size() > 0) {
+					if (ImGui::Button("Import Dataset")) {
+						std::string f;
+						if (openFile(f)) {
+							std::ifstream in(f);
+							importData(this->dataset, in);
+						}
+					}
+					ImGui::SameLine(0, 4);
+					if (ImGui::Button("Export Dataset") && this->dataset.first.size() > 0) {
 						std::string f;
 						if (saveFile(f)) {
 							std::ofstream out(f);
 							exportData(this->dataset, out);
 						}
-					} ImGui::SameLine();
-					if (ImGui::Button("View DataSet") && this->dataset.first.size() > 0) {
-						exportData(this->dataset, std::cout);
+					} ImGui::SameLine(0, 32);
+					if (ImGui::Button("View Dataset") && this->dataset.first.size() > 0) {
+						exportData(this->dataset, this->console_log);
+						this->s_show_console = true;
 					}
 
 					break;
@@ -258,8 +282,8 @@ void MlTool::OnUIRender() {
 				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
 				if (ImGui::Begin("Network Matrix", &this->s_show_network/*, ImGuiWindowFlags_AlwaysAutoResize*/)) {
 
-					constexpr static float unit_sz{ 50.f }, layer_spacing{ 2.f };
-					constexpr static int pt_len{ 100 };
+					constexpr static float unit_sz{ 50.f }, layer_spacing{ 2.f }, dash_len{ 0.1 }, dash_space{0.02};
+					constexpr static int pt_len{ 512 };
 					static float line_x[pt_len], line_y[pt_len], start_x, start_y, val, clamp, x, y;
 					static int r, c, layer_display{ 0 };
 					static bool
@@ -297,9 +321,10 @@ void MlTool::OnUIRender() {
 						ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0, y);
 						Scalar_t* dtbeg;
 						if (net_matx_view) {
-							static int offset_b, offset;
-							offset_b = (offset_b + 1) % (int)(ImGui::GetIO().Framerate * 4 / 3);
-							offset = (offset_b / (int)(round(ImGui::GetIO().Framerate) / 3) % 4);
+							static int offset_b;
+							static float offset;
+							offset_b = (offset_b + 1) % ((int)round(ImGui::GetIO().Framerate) + 1);
+							offset = (float)offset_b / (int)round(ImGui::GetIO().Framerate) * (dash_len + dash_space);
 							for (size_t i = 0; i < this->topology.size(); i++) {
 								r = this->topology[i];
 								c = 1;
@@ -307,8 +332,8 @@ void MlTool::OnUIRender() {
 								start_y = ((y - 2 - r) / 2.f) + 1;
 								if (i != this->topology.size() - 1) {
 									ImPlot::PushColormap(this->primary_theme);
-									line_x[0] = start_x + 0.5;
-									line_x[pt_len - 1] = start_x + layer_spacing + 1.5;
+									line_x[0] = start_x + 0.75;
+									line_x[pt_len - 1] = start_x + layer_spacing + 1.25;
 									for (size_t rw = 0; rw < this->weights[i]->rows() - 1; rw++) {
 										line_y[0] = start_y + (this->topology[i] - rw) - 0.5;
 										for (size_t cw = 0; cw < this->weights[i]->cols() - (i != this->topology.size() - 2); cw++) {
@@ -323,35 +348,41 @@ void MlTool::OnUIRender() {
 											//ImPlot::GetPlotSize();	// ^^^
 											line_y[pt_len - 1] =  0.5 * (y + this->topology[i + 1] - 1) - cw;
 											float d = dist(line_x[0], line_y[0], line_x[pt_len - 1], line_y[pt_len - 1]);
+											static int len;
+											static float t;
+											bool s_anim = animate;	// static state
+											t = offset / d;
+											len = 0;
 											for (int k = 1; k < pt_len - 1; k++) {
-												static float t, u, w1, w2, w3, w4;
-												if (animate) {
-													if (!((k - offset) % 4)) {	// rel == 0;
+												static float u, w1, w2, w3, w4;
+												if (s_anim) {
+													if (!(k % 3)) {
 														line_x[k] = NAN;
 														line_y[k] = NAN;
 														continue;
 													} else {
-														//t = k / (float)(pt_len - 1);
-														t = (k / 4) * (4.f / pt_len);
-														t += (
-															(offset / (float)pt_len) +	// min												// half
-															sgn(k % 4 - offset) * ((0.1 * 4 / pt_len) + ((abs(k % 4 - offset) - 1) * (0.4 * 4 / pt_len)))
-														);
+														t += (!(k % 3 - 1) * dash_space + !(k % 3 - 2) * dash_len) / d;
+													}
+													if (t > 1.f) {
+														t = 1.f;
+														line_x[k + 1] = line_x[pt_len - 1];
+														line_y[k + 1] = line_y[pt_len - 1];
+														len = k + 2;
 													}
 												} else {
 													t = k / (float)(pt_len - 1);	// equal increments
+													len = pt_len;
 												}
 												u = 1 - t;
 												w1 = u * u * u;
 												w2 = 3 * u * u * t;
 												w3 = 3 * u * t * t;
 												w4 = t * t * t;
-												line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.5f) + w3 * (line_x[pt_len - 1] - 1.5f) + w4 * (line_x[pt_len - 1]);
+												line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.f) + w3 * (line_x[pt_len - 1] - 1.f) + w4 * (line_x[pt_len - 1]);
 												line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[pt_len - 1] + w4 * line_y[pt_len - 1];
-
-												//if (animate && !((k - (this->epochs / 100 % 4)) % 4)) {}
+												if (t == 1.f) { break; }
 											}
-											ImPlot::PlotLine("##wl", line_x, line_y, pt_len);
+											ImPlot::PlotLine("##wl", line_x, line_y, len ? len : pt_len);
 											ImGui::PopID();
 										}
 									}
@@ -397,45 +428,6 @@ void MlTool::OnUIRender() {
 						}
 						ImPlot::EndPlot();
 					}
-#ifdef LOL
-					for (int i = 0; i < this->weights.size() + this->topology.size(); i++) {
-						if (i % 2) {	// weight
-							x = this->weights[i / 2]->cols();
-							y = this->weights[i / 2]->rows();
-							ImGui::PushID((i & 0xff) | ((x & 0xff) << 8) | ((y & 0xff) << 16));
-							ImPlot::PushColormap(this->primary_theme);
-							if (ImPlot::BeginPlot("##w", { (x * unit_sz), (y * unit_sz) }, ImPlotFlags_CanvasOnly)) {
-								ImPlot::SetupAxes(NULL, NULL, ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations);
-								ImPlot::SetupAxesLimits(0, x, 0, y);
-								ImPlot::PlotHeatmap("##hw", this->weights[i / 2]->data(), y, x, 0, 0, "%.1f", { 0, 0 }, ImPlotPoint{ (float)x, (float)y });
-								ImPlot::EndPlot();
-							}
-							ImPlot::PopColormap();
-						} else {	// neuron layer
-							x = 1;
-							y = this->neurons_matx[i / 2]->cols();
-							ImGui::PushID((i & 0xff) | ((x & 0xff) << 8) | ((y & 0xff) << 16));
-							ImPlot::PushColormap(this->secondary_theme);
-							ImGui::BeginGroup();
-							if (ImPlot::BeginPlot("##n", { (x * unit_sz), (y * unit_sz) }, ImPlotFlags_CanvasOnly)) {
-								ImPlot::SetupAxes(NULL, NULL, ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations);
-								ImPlot::SetupAxesLimits(0, x, 0, y);
-								ImPlot::PlotHeatmap("##hn", this->neurons_matx[i / 2]->data(), y, x, 0, 0, "%.1f", { 0, 0 }, ImPlotPoint{ (float)x, (float)y });
-								ImPlot::EndPlot();
-							}
-							if (ImPlot::BeginPlot("##c", { (x * unit_sz), (y * unit_sz) }, ImPlotFlags_CanvasOnly)) {
-								ImPlot::SetupAxes(NULL, NULL, ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_Lock | ImPlotAxisFlags_NoDecorations);
-								ImPlot::SetupAxesLimits(0, x, 0, y);
-								ImPlot::PlotHeatmap("##hc", this->cache_matx[i / 2]->data(), y, x, 0, 0, "%.1f", { 0, 0 }, ImPlotPoint{ (float)x, (float)y });
-								ImPlot::EndPlot();
-							}
-							ImGui::EndGroup();
-							ImPlot::PopColormap();
-						}
-						ImGui::PopID();
-						ImGui::SameLine();
-					}
-#endif
 					ImPlot::PopStyleVar();
 				} ImGui::End();
 				ImGui::PopStyleVar();
@@ -480,6 +472,19 @@ void MlTool::OnUIRender() {
 					}
 				} ImGui::End();
 				ImGui::PopStyleVar();
+			}
+// CONSOLE
+			if (this->s_show_console) {
+				//ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
+				if (ImGui::Begin("Log", &this->s_show_console)) {
+					//ImGui::PopStyleVar();
+					if (ImGui::Button("Clear Log")) { std::ostringstream().swap(this->console_log); }
+					if (ImGui::BeginChild("##console", { 0, 0 }, true, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+						ImGui::TextWrapped("%s", this->console_log.str().c_str());
+					} ImGui::EndChild();
+				} else {
+					//ImGui::PopStyleVar();
+				} ImGui::End();
 			}
 
 		} ImGui::End();

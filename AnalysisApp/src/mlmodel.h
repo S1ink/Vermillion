@@ -4,6 +4,7 @@
 #include <array>
 #include <thread>
 #include <mutex>
+#include <sstream>
 
 #include "imgui.h"
 #include "implot/implot.h"
@@ -13,10 +14,17 @@
 
 #include "nn.h"
 
-
+/*
+TODO:
+* Status view for *network and *dataset
+* Manual inference - dataset tab
+* Checks/safety for dataset-network size conflicts
+* Tooltips/improved animation
+* 
+*/
 class MlTool : public Walnut::Layer, public NeuralNetwork {
 public:
-	MlTool() : NeuralNetwork({2, 3, 1}) {}
+	MlTool() : NeuralNetwork({2, 4, 1}) {}
 	~MlTool() = default;
 
 
@@ -41,15 +49,16 @@ private:
 	DataSet dataset;
 	std::thread trainer;
 	std::mutex train_mutex;
+	std::ostringstream console_log;
 	
 	ImPlotColormap primary_theme{ImPlotColormap_Cool}, secondary_theme{ImPlotColormap_Plasma};
 	int
 		activ_f_idx{ ActivationFunc::SIGMOID },
 		reg_f_idx{ Regularization::NONE },
 		section_idx{ 0 },
-		layers_drag{(int)this->topology.size()},
-		data_size{10},
-		epochs{0}
+		layers_drag{ (int)this->topology.size() },
+		data_size{ 100 },
+		epochs{ 0 }
 	;
 	float
 		epoch_ms{ 0.f }
@@ -58,6 +67,7 @@ private:
 		s_tool_enable{ true },
 		s_show_network{ false },
 		s_show_graphs{ false },
+		s_show_console{ false },
 
 		s_regen_avail{ false },
 
