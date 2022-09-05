@@ -58,10 +58,12 @@ private:
 		section_idx{ 0 },
 		layers_drag{ (int)this->topology.size() },
 		data_size{ 100 },
-		epochs{ 0 }
+		epochs{ 0 },
+		batch_size{ 0 }
 	;
 	float
-		epoch_ms{ 0.f }
+		epoch_ms{ 0.f },
+		throttle_scalar{ 1.0 }
 	;
 	bool
 		s_tool_enable{ true },
@@ -71,8 +73,9 @@ private:
 
 		s_regen_avail{ false },
 
-		s_training_thread{ false },
-		s_training_loop{ false }
+		s_training{ false },	// this is a status not a control var
+		s_throttle_training{ true },
+		s_sync_plots{ false }
 	;
 
 	inline static constexpr char

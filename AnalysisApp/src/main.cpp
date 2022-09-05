@@ -12,7 +12,7 @@
 
 
 void tmain(int argc, char** argv) {
-	std::cout << _fdsign(-3.f) << std::endl;
+	std::cout << ((-0) == 0) << std::endl;
 }
 
 

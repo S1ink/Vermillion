@@ -39,9 +39,9 @@ void MlTool::OnUIRender() {
 			ImGui::SetNextItemWidth(100);
 			if(ImGui::Combo("##theme2", &this->secondary_theme, ImPlot::GetColormapName(0))) { ImPlot::BustColorCache(); }
 
-			if (ImGui::BeginChild("sections", ImVec2{ 180, 0 }, true/*, ImGuiWindowFlags_AlwaysAutoResize*/)) {	// old: 180xAuto
+			if (ImGui::BeginChild("sections", ImVec2{ 200, 0 }, true/*, ImGuiWindowFlags_AlwaysAutoResize*/)) {	// old: 180xAuto
 
-				ImGui::BeginChild("sect_network", ImVec2{ 180, 180 }, false/*, ImGuiWindowFlags_AlwaysAutoResize*/);	// old: 180x180
+				ImGui::BeginChild("sect_network", ImVec2{ 200, 180 }, false/*, ImGuiWindowFlags_AlwaysAutoResize*/);	// old: 180x180
 				if (ImGui::Selectable("##n", this->section_idx == 0, ImGuiSelectableFlags_None, ImGui::GetContentRegionAvail())) { this->section_idx = 0; }
 				ImGui::SetCursorPos(ImGui::GetStyle().ItemInnerSpacing);
 				ImGui::BeginGroup();
@@ -60,7 +60,7 @@ void MlTool::OnUIRender() {
 
 				ImGui::Separator();
 
-				ImGui::BeginChild("sect_dataset", ImVec2{180, 180}, false/*, ImGuiWindowFlags_AlwaysAutoResize*/);	// '''
+				ImGui::BeginChild("sect_dataset", ImVec2{200, 180}, false/*, ImGuiWindowFlags_AlwaysAutoResize*/);	// '''
 				if (ImGui::Selectable("##d", this->section_idx == 1, ImGuiSelectableFlags_None, ImGui::GetContentRegionAvail())) { this->section_idx = 1; }
 				ImGui::SetCursorPos(ImGui::GetStyle().ItemInnerSpacing);
 				ImGui::BeginGroup();
@@ -86,7 +86,7 @@ void MlTool::OnUIRender() {
 
 				ImGui::Separator();
 
-				ImGui::BeginChild("sect_training", ImVec2{180, 180}, false/*, ImGuiWindowFlags_AlwaysAutoResize*/);	// '''
+				ImGui::BeginChild("sect_training", ImVec2{200, 180}, false/*, ImGuiWindowFlags_AlwaysAutoResize*/);	// '''
 				if (ImGui::Selectable("##t", this->section_idx == 2, ImGuiSelectableFlags_None, ImGui::GetContentRegionAvail())) { this->section_idx = 2; }
 				ImGui::SetCursorPos(ImGui::GetStyle().ItemInnerSpacing);
 				ImGui::BeginGroup();
@@ -243,36 +243,73 @@ void MlTool::OnUIRender() {
 				}
 				case 2: {
 /*TRAINING OPTIONS*/
-					// view progress
+					if (!this->s_training && !this->compatibleDataSet(this->dataset)) {
+						ImGui::TextColored({ 1, 0.2, 0, 1 }, "Training unavailable: incompatible dataset.\n\t(NN I/O != DS I/O)");
+					} else {
+						static int mode{ 2 };
+						if (this->s_training) { ImGui::BeginDisabled(); }
+						ImGui::SetNextItemWidth(160);
+						if (ImGui::Combo("Training Mode", &mode, "Incremental\0Batch\0Continuous") && mode == 2) { this->batch_size = 0; }
+						ImGui::SameLine(0, 16);
+						if (mode != 1) { ImGui::BeginDisabled(); }
+						ImGui::SetNextItemWidth(100);
+						if (ImGui::InputInt("Batch Size", &this->batch_size) && this->batch_size < 0) { this->batch_size = 0; }
+						if (mode != 1) { ImGui::EndDisabled(); }
+						if (this->s_training) { ImGui::EndDisabled(); }
+						switch (mode) {
+						case 0: {
+							if (ImGui::Button("Train") && !this->trainer.joinable()) {
+								this->batch_size = 1;
+								this->s_training = true;
+								this->trainer = std::thread(trainThread, this);
+							}
+							break;
+						}
+						case 1: {
+							if (ImGui::Button("Start Batch") && !this->trainer.joinable()) {
+								this->s_training = true;
+								this->trainer = std::thread(trainThread, this);
+							}
+							break;
+						}
+						case 2: {
+							if (ImGui::Button(this->batch_size ? "Stop Continuous" : "Start Continuous")) {
+								if ((this->batch_size = -(int)(!this->batch_size)) && !this->trainer.joinable()) {
+									this->s_training = true;
+									this->trainer = std::thread(trainThread, this);
+								}
+							}
+						}
+						}
+					}
+					ImGui::Spacing(); ImGui::Spacing();
+					ImGui::Checkbox("Throttle training speed", &this->s_throttle_training);
+					if (this->s_throttle_training) {
+						ImGui::SameLine();
+						ImGui::SetNextItemWidth(100);
+						ImGui::SliderFloat("Throttle scalar", &this->throttle_scalar, 0, 10, "%.1f");
+					}
+					ImGui::Checkbox("Synchronize plot data (may hurt performance)", &this->s_sync_plots);
+					
+					ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 8, 25 });
+					ImGui::Spacing(); ImGui::PopStyleVar(); ImGui::Separator();
+
 					if (ImGui::Button("Clear Epoch History")) {
 						this->epochs_avg.clear();
 						this->epochs_high.clear();
 						this->epochs_low.clear();
 						this->epochs = 0;
 					}
-
-				// add check for dataset size and network i/o size
-					// train - inc/run (x)times
-					bool disable = this->s_training_thread || this->trainer.joinable();
-					if (disable) { ImGui::BeginDisabled(); }
-					if (ImGui::Button("Train (Single Run)")) {
-						this->trainer = std::thread(trainThread, this);
-						this->s_training_thread = true;
-					}
-					if (disable) { ImGui::EndDisabled(); }
-					if (ImGui::Button(this->s_training_loop ? "Stop Continuous" : "Start Continuous")) {
-						if (this->s_training_loop = !this->s_training_loop) {
-							this->trainer = std::thread(trainThread, this);
-							this->s_training_thread = true;
-						}
-					}
-					if (!this->s_training_thread && this->trainer.joinable()) {
-						this->trainer.join();
-					}
+					// epoch limit?
 
 				} }
 
 			} ImGui::EndChild();
+			if (!this->s_training && this->trainer.joinable()) {
+				//std::cout << "JOINING: " << std::chrono::high_resolution_clock::now().time_since_epoch().count() << std::endl;
+				this->trainer.join();
+				
+			}
 
 			// viewing windows
 
@@ -282,8 +319,8 @@ void MlTool::OnUIRender() {
 				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
 				if (ImGui::Begin("Network Matrix", &this->s_show_network/*, ImGuiWindowFlags_AlwaysAutoResize*/)) {
 
-					constexpr static float unit_sz{ 50.f }, layer_spacing{ 2.f }, dash_len{ 0.1 }, dash_space{0.02};
-					constexpr static int pt_len{ 512 };
+					constexpr static float unit_sz{ 50.f }, layer_spacing{ 2.f }, dash_len{ 0.2 }, dash_space{0.02}, anim_round_dur{ 0.5 };
+					constexpr static int pt_len{ 512 }, pts_static{ 25 };	// scale these ^^^ by relative network size for better perf
 					static float line_x[pt_len], line_y[pt_len], start_x, start_y, val, clamp, x, y;
 					static int r, c, layer_display{ 0 };
 					static bool
@@ -323,8 +360,8 @@ void MlTool::OnUIRender() {
 						if (net_matx_view) {
 							static int offset_b;
 							static float offset;
-							offset_b = (offset_b + 1) % ((int)round(ImGui::GetIO().Framerate) + 1);
-							offset = (float)offset_b / (int)round(ImGui::GetIO().Framerate) * (dash_len + dash_space);
+							offset_b = (offset_b + 1) % (int)(round(ImGui::GetIO().Framerate) * anim_round_dur);
+							offset = (float)offset_b / (int)(round(ImGui::GetIO().Framerate) * anim_round_dur);
 							for (size_t i = 0; i < this->topology.size(); i++) {
 								r = this->topology[i];
 								c = 1;
@@ -332,8 +369,8 @@ void MlTool::OnUIRender() {
 								start_y = ((y - 2 - r) / 2.f) + 1;
 								if (i != this->topology.size() - 1) {
 									ImPlot::PushColormap(this->primary_theme);
-									line_x[0] = start_x + 0.75;
-									line_x[pt_len - 1] = start_x + layer_spacing + 1.25;
+									line_x[0] = start_x + 0.9;
+									line_x[pt_len - 1] = start_x + layer_spacing + 1.1;
 									for (size_t rw = 0; rw < this->weights[i]->rows() - 1; rw++) {
 										line_y[0] = start_y + (this->topology[i] - rw) - 0.5;
 										for (size_t cw = 0; cw < this->weights[i]->cols() - (i != this->topology.size() - 2); cw++) {
@@ -341,48 +378,52 @@ void MlTool::OnUIRender() {
 											val = this->weights[i]->coeff(rw, cw);
 											clamp = (val > 5.f ? 5.f : (val < -5.f ? -5.f : val));
 											ImVec4 color = ImPlot::SampleColormap(clamp / 10.f + 0.5f);
-											ImPlot::SetNextLineStyle(
-												color,
-												fabs(clamp) * 2.f
-											);
+											if (this->s_training) {
+												static float t;
+												t = 0.5 + (offset + (offset >= 0.5) * (1 - 2 * offset));
+												color.x *= t;
+												color.y *= t;
+												color.z *= t;
+											}
+											ImPlot::SetNextLineStyle(color, fabs(clamp) * 2.f);
 											//ImPlot::GetPlotSize();	// ^^^
 											line_y[pt_len - 1] =  0.5 * (y + this->topology[i + 1] - 1) - cw;
-											float d = dist(line_x[0], line_y[0], line_x[pt_len - 1], line_y[pt_len - 1]);
-											static int len;
-											static float t;
-											bool s_anim = animate;	// static state
-											t = offset / d;
-											len = 0;
-											for (int k = 1; k < pt_len - 1; k++) {
-												static float u, w1, w2, w3, w4;
-												if (s_anim) {
-													if (!(k % 3)) {
+											static float t, u, w1, w2, w3, w4;
+											if (animate) {
+												static float d;
+												static int len;
+												d = dist(line_x[0], line_y[0], line_x[pt_len - 1], line_y[pt_len - 1]);
+												t = offset * (dash_len + dash_space) / d;
+												len = pt_len;
+												for (int k = 1; k < len - 1; k++) {
+													if (!((k + 1) % 3)) {
 														line_x[k] = NAN;
 														line_y[k] = NAN;
 														continue;
-													} else {
-														t += (!(k % 3 - 1) * dash_space + !(k % 3 - 2) * dash_len) / d;
-													}
-													if (t > 1.f) {
+													} else if(k != 1 &&
+														(t += (!((k + 1) % 3 - 1) * dash_space + !((k + 1) % 3 - 2) * dash_len) / d) > 1.f)
+													{
 														t = 1.f;
 														line_x[k + 1] = line_x[pt_len - 1];
 														line_y[k + 1] = line_y[pt_len - 1];
 														len = k + 2;
 													}
-												} else {
-													t = k / (float)(pt_len - 1);	// equal increments
-													len = pt_len;
+													u = 1 - t; w1 = u * u * u; w2 = 3 * u * u * t; w3 = 3 * u * t * t; w4 = t * t * t;
+													line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.f) + w3 * (line_x[pt_len - 1] - 1.f) + w4 * (line_x[pt_len - 1]);
+													line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[pt_len - 1] + w4 * line_y[pt_len - 1];
 												}
-												u = 1 - t;
-												w1 = u * u * u;
-												w2 = 3 * u * u * t;
-												w3 = 3 * u * t * t;
-												w4 = t * t * t;
-												line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.f) + w3 * (line_x[pt_len - 1] - 1.f) + w4 * (line_x[pt_len - 1]);
-												line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[pt_len - 1] + w4 * line_y[pt_len - 1];
-												if (t == 1.f) { break; }
+												ImPlot::PlotLine("##wl", line_x, line_y, len);
+											} else {
+												for (int k = 1; k < pts_static - 1; k++) {
+													t = k / (float)(pts_static - 1);
+													u = 1 - t; w1 = u * u * u; w2 = 3 * u * u * t; w3 = 3 * u * t * t; w4 = t * t * t;
+													line_x[k] = w1 * line_x[0] + w2 * (line_x[0] + 1.f) + w3 * (line_x[pt_len - 1] - 1.f) + w4 * (line_x[pt_len - 1]);
+													line_y[k] = w1 * line_y[0] + w2 * line_y[0] + w3 * line_y[pt_len - 1] + w4 * line_y[pt_len - 1];
+												}
+												line_x[pts_static - 1] = line_x[pt_len - 1];
+												line_y[pts_static - 1] = line_y[pt_len - 1];
+												ImPlot::PlotLine("##wl", line_x, line_y, pts_static);
 											}
-											ImPlot::PlotLine("##wl", line_x, line_y, len ? len : pt_len);
 											ImGui::PopID();
 										}
 									}
@@ -449,15 +490,15 @@ void MlTool::OnUIRender() {
 							ImPlot::SetupAxisScale(ImAxis_X1, scale_x);
 							ImPlot::SetupAxisScale(ImAxis_Y1, scale_y);
 							ImPlot::SetupLegend(ImPlotLocation_NorthEast);
-							if (this->train_mutex.try_lock()) {
+							//if (!this->s_sync_plots || this->train_mutex.try_lock()) {
 								ImPlot::SetNextLineStyle({ 0.7, 0.7, 0, 1 });
 								ImPlot::PlotLine("High MSE", this->epochs_high.data(), this->epochs_high.size());
 								ImPlot::SetNextLineStyle({ 0, 0.7, 0.3, 1 });
 								ImPlot::PlotLine("Avg MSE", this->epochs_avg.data(), this->epochs_avg.size());
 								ImPlot::SetNextLineStyle({ 0, 0.4, 0.7, 1 });
 								ImPlot::PlotLine("Low MSE", this->epochs_low.data(), this->epochs_low.size());
-								this->train_mutex.unlock();
-							}
+								//if (this->s_sync_plots) { this->train_mutex.unlock(); }
+							//}
 							ImPlot::EndPlot();
 						}
 						if (ImPlot::BeginPlot("Last Epoch MSE Trend", { -1, 0 }, ImPlotFlags_Crosshairs)) {
@@ -465,7 +506,10 @@ void MlTool::OnUIRender() {
 							//ImPlot::SetupAxisScale(ImAxis_X1, scale_x);
 							//ImPlot::SetupAxisScale(ImAxis_Y1, scale_y);
 							ImPlot::SetNextLineStyle({ 0.8, 0.4, 0, 1 });
-							ImPlot::PlotLine("MSE Trend", this->epoch_last.data(), this->epoch_last.size());
+							//if (!this->s_sync_plots || this->train_mutex.try_lock()) {
+								ImPlot::PlotLine("MSE Trend", this->epoch_last.data(), this->epoch_last.size());
+								//if (this->s_sync_plots) { this->train_mutex.unlock(); }
+							//}
 							ImPlot::EndPlot();
 						}						
 						ImPlot::EndSubplots();
@@ -515,36 +559,28 @@ void vec_itr_hla(std::vector<float>::iterator start, std::vector<float>::iterato
 }
 
 void MlTool::trainThread(MlTool* t) {
-	if (t->dataset.first.size() > 0) {
-		using hrc = std::chrono::high_resolution_clock;
-		hrc::time_point ref;
-		if (!t->s_training_loop) {
+	using hrc = std::chrono::high_resolution_clock;
+	hrc::time_point ref;
+	t->s_training = true;
+	//std::cout << "START: " << std::chrono::high_resolution_clock::now().time_since_epoch().count() << std::endl;
+	for (int e = 0; (t->batch_size != 0) && (e < t->batch_size || t->batch_size < 0); e++) {
+		ref = hrc::now();
+		t->epoch_last.clear();
+		t->train_graph(t->dataset, t->epoch_last);
+		{
 			std::lock_guard<std::mutex> l{ t->train_mutex };
-			ref = hrc::now();
-			t->epoch_last.clear();
-			t->train_graph(t->dataset, t->epoch_last);
 			t->epochs_avg.push_back(0);
 			t->epochs_high.push_back(0);
-			t->epochs_low.push_back(10000.f);
+			t->epochs_low.push_back(std::numeric_limits<Scalar_t>::max());
 			vec_itr_hla(t->epoch_last.begin(), t->epoch_last.end(), t->epochs_high.back(), t->epochs_low.back(), t->epochs_avg.back());
-			t->epoch_ms = (hrc::now() - ref).count() / 1e6;
-			t->epochs++;
-		} else {
-			while (t->s_training_loop) {
-				ref = hrc::now();
-				std::lock_guard<std::mutex> l{ t->train_mutex };
-				t->epoch_last.clear();
-				t->train_graph(t->dataset, t->epoch_last);
-				t->epochs_avg.push_back(0);
-				t->epochs_high.push_back(-1.f);
-				t->epochs_low.push_back(10000.f);
-				vec_itr_hla(t->epoch_last.begin(), t->epoch_last.end(), t->epochs_high.back(), t->epochs_low.back(), t->epochs_avg.back());
-				t->epoch_ms = (hrc::now() - ref).count() / 1e6;
-				t->epochs++;
-			}
+		}
+		t->epoch_ms = (hrc::now() - ref).count() / 1e6;
+		t->epochs++;
+		if (t->s_throttle_training) {
+			std::this_thread::sleep_for(std::chrono::nanoseconds((uint64_t)(t->epoch_ms * 1e6 * t->throttle_scalar)));	// cut utilization by roughly half
 		}
 	}
-	t->s_training_thread = false;
+	t->s_training = false;	// little redundant but more convenient
 }
 
 size_t MlTool::computeViewWidth() const {
