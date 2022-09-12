@@ -101,6 +101,14 @@ protected:
 		proc,
 		binary;
 	std::array<cv::Mat, 3> channels;
+	cv::Mat cam_matx, dist_coeffs;
+	cv::Mat1f tvec1, tvec2, rvec1, rvec2;
+	std::array<cv::Point3f, 4> marker_coords{
+		cv::Point3f{0.5, 0.5, 0.0},
+		cv::Point3f{0.5, -0.5, 0.0},
+		cv::Point3f{-0.5, -0.5, 0.0},
+		cv::Point3f{-0.5, 0.5, 0.0}
+	};
 
 	std::vector<int> ids;
 	std::vector<cv::Vec3f> circles;
@@ -109,9 +117,7 @@ protected:
 	std::vector<cv::Point2f> plot;
 	
 	static inline cv::Ptr<cv::aruco::Dictionary>
-		markers_dict{
-			cv::aruco::generateCustomDictionary(7, 4, cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50))
-	};
+		markers_dict{ cv::aruco::getPredefinedDictionary(cv::aruco::DICT_4X4_50) };
 
 	float
 		alpha{ 0.75f }, beta{ 0.75f }, gamma{ 20.f },
@@ -129,6 +135,30 @@ protected:
 		max_rad{ 20 }
 	;
 
+
+};
+class Points3D : public VPipeline {
+public:
+	inline Points3D() : VPipeline{"3D Point Sim"} {}
+	~Points3D() = default;
+
+	virtual void invokeGui() override;
+	virtual void process(cv::Mat&) override;
+
+private:
+	cv::Mat1f tvec{cv::Mat1f::zeros(1, 3)}, rvec{cv::Mat1f::zeros(1, 3)};
+	cv::Mat cam_matx, dist_coeffs;
+	const inline static std::array<cv::Point3f, 8> pts{
+		cv::Point3f{0.5, 0.5, 0.5},
+		cv::Point3f{0.5, 0.5, -0.5},
+		cv::Point3f{-0.5, 0.5, -0.5},
+		cv::Point3f{-0.5, 0.5, 0.5},
+		cv::Point3f{-0.5, -0.5, 0.5},
+		cv::Point3f{-0.5, -0.5, -0.5},
+		cv::Point3f{0.5, -0.5, -0.5},
+		cv::Point3f{0.5, -0.5, 0.5}
+	};
+	std::array<cv::Point2f, 8> plots;
 
 };
 class CalibAruco : public VPipeline {

@@ -53,6 +53,16 @@ void Analyzer::invokeGui() {
 	if (ImGui::Button("Reset points")) {
 		this->plot.clear();
 	}
+	if (ImGui::Button("Read Calib")) {
+		std::string f;
+		if (openFile(f)) {
+			cv::FileStorage file(f, cv::FileStorage::READ);
+			cv::FileNode n{ file["camera_matrix"] };
+			cv::read(n, this->cam_matx);
+			n = file["distortion_coefficients"];
+			cv::read(n, this->dist_coeffs);
+		}
+	}
 
 }
 void Analyzer::process(cv::Mat& io_frame) {
@@ -71,9 +81,33 @@ void Analyzer::process(cv::Mat& io_frame) {
 	cv::HoughCircles(this->binary, this->circles, cv::HOUGH_GRADIENT, this->dp, this->min_dist / 100 * this->binary.size().width, this->hough_p1, this->hough_p2, this->min_rad, this->max_rad);
 
 	cv::aruco::detectMarkers(io_frame, this->markers_dict, this->corners, this->ids);
-	////cv::findContours(this->binary, this->contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 
 	cv::cvtColor(this->binary, io_frame, cv::COLOR_GRAY2BGR);
+	static int checks;
+	checks = 0;
+	if (!(this->cam_matx.empty() || this->dist_coeffs.empty())) {
+		for (size_t i = 0; i < this->corners.size(); i++) {
+			if (this->ids[i] == 4) {	// reference
+				cv::solvePnP(this->marker_coords, this->corners[i], this->cam_matx, this->dist_coeffs, this->rvec1, this->tvec1);
+				checks |= 0b01;
+			}
+			if (this->ids[i] == 5) {	// offset
+				cv::solvePnP(this->marker_coords, this->corners[i], this->cam_matx, this->dist_coeffs, this->rvec2, this->tvec2);
+				checks |= 0b10;
+			}
+		}
+	}
+	if (checks > 2) {
+		static cv::Mat1f t, r;
+		t = this->tvec1 - this->tvec2;
+		r = (this->rvec1 - this->rvec2) / CV_PI * 180;	// degrees
+		std::ostringstream str;
+		str << "T-Diff XYZ: [ " << t[0][0] << ", " << t[0][1] << ", " << t[0][2] << " ]";
+		cv::putText(io_frame, str.str(), { 10, 30 }, cv::FONT_HERSHEY_DUPLEX, 0.6, { 0, 120, 255 }, 2, cv::LINE_AA);
+		std::ostringstream().swap(str);
+		str << "R-Diff XYZ: [ " << r[0][0] << ", " << r[0][1] << ", " << r[0][2] << " ]";
+		cv::putText(io_frame, str.str(), { 10, 55 }, cv::FONT_HERSHEY_DUPLEX, 0.6, { 0, 120, 255 }, 2, cv::LINE_AA);
+	}
 	for (size_t i = 0; i < this->circles.size(); i++) {
 		cv::circle(io_frame, cv::Point{ (int)this->circles[i][0], (int)this->circles[i][1] }, this->circles[i][2], { 255, 255, 0 }, 2);
 		cv::putText(io_frame, std::to_string(i), cv::Point{ (int)this->circles[i][0], (int)this->circles[i][1] }, cv::FONT_HERSHEY_DUPLEX, 0.5, { 0, 255, 0 });
@@ -103,10 +137,42 @@ void Analyzer::process(cv::Mat& io_frame) {
 	//cv::aruco::estimatePoseSingleMarkers(this->corners, 1.f, )
 }
 
+void Points3D::invokeGui() {
+	if (ImGui::Button("Load Calib")) {
+		std::string f;
+		if (openFile(f)) {
+			cv::FileStorage file(f, cv::FileStorage::READ);
+			cv::FileNode n{ file["camera_matrix"] };
+			cv::read(n, this->cam_matx);
+			n = file["distortion_coefficients"];
+			cv::read(n, this->dist_coeffs);
+		}
+	}
+	ImGui::SliderFloat("TX", &this->tvec[0][0], -20, 20, "%.2f");
+	ImGui::SliderFloat("TY", &this->tvec[0][1], -20, 20, "%.2f");
+	ImGui::SliderFloat("TZ", &this->tvec[0][2], -20, 20, "%.2f");
+	ImGui::SliderFloat("RX", &this->rvec[0][0], -CV_PI, CV_PI, "%.2f");
+	ImGui::SliderFloat("RY", &this->rvec[0][1], -CV_PI, CV_PI, "%.2f");
+	ImGui::SliderFloat("RZ", &this->rvec[0][2], -CV_PI, CV_PI, "%.2f");
+}
+void Points3D::process(cv::Mat& io_frame) {
+	cv::projectPoints(this->pts, this->rvec, this->tvec, this->cam_matx, this->dist_coeffs, this->plots);
+	for (size_t i = 0; i < this->plots.size(); i++) {
+		cv::circle(io_frame, this->plots[i], 1, { 0, 0, 255 }, 5);
+		cv::line(io_frame, cv::Point2i(this->plots[i]), cv::Point2i(this->plots[(i + 1) % this->plots.size()]), { 0, 0, 255 }, 2, cv::LINE_AA);
+	}
+	cv::line(io_frame, cv::Point2i(this->plots[0]), cv::Point2i(this->plots[3]), { 0, 0, 255 }, 2, cv::LINE_AA);
+	cv::line(io_frame, cv::Point2i(this->plots[1]), cv::Point2i(this->plots[6]), { 0, 0, 255 }, 2, cv::LINE_AA);
+	cv::line(io_frame, cv::Point2i(this->plots[2]), cv::Point2i(this->plots[5]), { 0, 0, 255 }, 2, cv::LINE_AA);
+	cv::line(io_frame, cv::Point2i(this->plots[4]), cv::Point2i(this->plots[7]), { 0, 0, 255 }, 2, cv::LINE_AA);
+}
+
 void CalibAruco::invokeGui() {
 	if (ImGui::InputInt2("Squares X/Y", this->sq_arr) ||
 		ImGui::InputFloat2("Length [squares/markers]", this->len_arr, "%.3f")
-	) { this->recreateBoard(); }
+		) {
+		this->recreateBoard();
+	}
 	if (ImGui::Checkbox("Fixed AR", &this->s_fix_aspect_ratio)) { this->calib_flags ^= cv::CALIB_FIX_ASPECT_RATIO; }
 	if (this->s_fix_aspect_ratio) {
 		ImGui::SameLine();
@@ -154,12 +220,13 @@ void CalibAruco::invokeGui() {
 	if (this->keyframes == 0) { ImGui::EndDisabled(); }
 
 	ImGui::Separator();
-
-	if (ImGui::ListBox("Marker Dictionary", &this->dict_id, CalibAruco::dict_names, 22)) {
+	ImGui::SetNextItemWidth(200);
+	if (ImGui::Combo("Marker Dictionary", &this->dict_id, CalibAruco::dict_names, 22)) {
 		if (this->dict_id != 22) {
 			this->marker_dict = cv::aruco::getPredefinedDictionary(this->dict_id);
 			this->recreateBoard();
-		} else if(!this->dict_custom.empty()) {
+		}
+		else if (!this->dict_custom.empty()) {
 			cv::FileStorage fs(this->dict_custom, cv::FileStorage::READ);
 			this->marker_dict->readDictionary(fs.root());
 			this->recreateBoard();
@@ -181,7 +248,7 @@ void CalibAruco::invokeGui() {
 
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Save Board")) {
+	if (ImGui::Button("Save Charuco Board")) {
 		std::string f;
 		if (saveFile(f)) {
 			cv::Mat out;
@@ -189,6 +256,24 @@ void CalibAruco::invokeGui() {
 				m_x = (page_size_wh[0] - (sq_x * sq_len)) * pixels_per_unit / 2,
 				m_y = (page_size_wh[1] - (sq_y * sq_len)) * pixels_per_unit / 2;
 			this->ch_board->draw(
+				cv::Size2i{ (int)(this->page_size_wh[0] * this->pixels_per_unit), (int)(this->page_size_wh[1] * this->pixels_per_unit) },
+				out, (m_x < m_y ? m_x : m_y)
+			);
+			cv::imwrite(f, out);
+		}
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Save Tile Board")) {
+		std::string f;
+		if (saveFile(f)) {
+			cv::Mat out;
+			int
+				m_x = (page_size_wh[0] - (sq_x * sq_len)) * pixels_per_unit / 2,
+				m_y = (page_size_wh[1] - (sq_y * sq_len)) * pixels_per_unit / 2;
+			cv::Ptr<cv::aruco::GridBoard> b = cv::aruco::GridBoard::create(
+				this->sq_x, this->sq_y, this->sq_len, this->marker_len, this->marker_dict
+			);
+			b->draw(
 				cv::Size2i{ (int)(this->page_size_wh[0] * this->pixels_per_unit), (int)(this->page_size_wh[1] * this->pixels_per_unit) },
 				out, (m_x < m_y ? m_x : m_y)
 			);

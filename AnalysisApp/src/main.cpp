@@ -26,8 +26,9 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
 	std::shared_ptr<VisionTool> vis{ std::make_shared<VisionTool>() };
 	std::shared_ptr<MlTool> ml{ std::make_shared<MlTool>() };
 	static Analyzer pipe;
+	static Points3D plotter;
 	static CalibAruco aruco_tool;
-	vis->addPipelines({ &aruco_tool, &pipe });
+	vis->addPipelines({ &aruco_tool, &pipe, &plotter });
 	app->PushLayer(vis);
 	app->PushLayer(ml);
 	static bool demo{ false };
